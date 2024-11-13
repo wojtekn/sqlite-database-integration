@@ -1,11 +1,11 @@
-<?php // phpcs:disable WordPress.Files.FileName.InvalidClassFileName,Generic.Files.OneObjectStructurePerFile.MultipleFound
+<?php
 
-class SQLiteTokenFactory {
+class WP_SQLite_Token_Factory {
 	private static $valid_types = array(
-		SQLiteToken::TYPE_RAW,
-		SQLiteToken::TYPE_IDENTIFIER,
-		SQLiteToken::TYPE_VALUE,
-		SQLiteToken::TYPE_OPERATOR,
+		WP_SQLite_Token::TYPE_RAW,
+		WP_SQLite_Token::TYPE_IDENTIFIER,
+		WP_SQLite_Token::TYPE_VALUE,
+		WP_SQLite_Token::TYPE_OPERATOR,
 	);
 
 	private static $valid_operators = array(
@@ -296,34 +296,34 @@ class SQLiteTokenFactory {
 		);
 	}
 
-	public static function raw( string $value ): SQLiteToken {
-		return self::create( SQLiteToken::TYPE_RAW, $value );
+	public static function raw( string $value ): WP_SQLite_Token {
+		return self::create( WP_SQLite_Token::TYPE_RAW, $value );
 	}
 
-	public static function identifier( string $value ): SQLiteToken {
-		return self::create( SQLiteToken::TYPE_IDENTIFIER, $value );
+	public static function identifier( string $value ): WP_SQLite_Token {
+		return self::create( WP_SQLite_Token::TYPE_IDENTIFIER, $value );
 	}
 
-	public static function value( $value ): SQLiteToken {
-		return self::create( SQLiteToken::TYPE_VALUE, self::escape_value( $value ) );
+	public static function value( $value ): WP_SQLite_Token {
+		return self::create( WP_SQLite_Token::TYPE_VALUE, self::escape_value( $value ) );
 	}
 
-	public static function double_quoted_value( $value ): SQLiteToken {
+	public static function double_quoted_value( $value ): WP_SQLite_Token {
 		$value = substr( $value, 1, -1 );
 		$value = str_replace( '\"', '"', $value );
 		$value = str_replace( '""', '"', $value );
-		return self::create( SQLiteToken::TYPE_VALUE, self::escape_value( $value ) );
+		return self::create( WP_SQLite_Token::TYPE_VALUE, self::escape_value( $value ) );
 	}
 
-	public static function operator( string $value ): SQLiteToken {
+	public static function operator( string $value ): WP_SQLite_Token {
 		$upper_value = strtoupper( $value );
 		if ( ! in_array( $upper_value, self::$valid_operators, true ) ) {
 			throw new InvalidArgumentException( "Invalid SQLite operator or keyword: $value" );
 		}
-		return self::create( SQLiteToken::TYPE_OPERATOR, $upper_value );
+		return self::create( WP_SQLite_Token::TYPE_OPERATOR, $upper_value );
 	}
 
-	public static function create_function( string $name, array $expressions ): Expression {
+	public static function create_function( string $name, array $expressions ): WP_SQLite_Expression {
 		$upper_name = strtoupper( $name );
 		if ( ! isset( self::$functions[ $upper_name ] ) ) {
 			throw new InvalidArgumentException( "Unknown SQLite function: $name" );
@@ -356,14 +356,14 @@ class SQLiteTokenFactory {
 
 		$tokens[] = self::raw( ')' );
 
-		return new SQLiteExpression( $tokens );
+		return new WP_SQLite_Expression( $tokens );
 	}
 
-	private static function create( string $type, string $value ): SQLiteToken {
+	private static function create( string $type, string $value ): WP_SQLite_Token {
 		if ( ! in_array( $type, self::$valid_types, true ) ) {
 			throw new InvalidArgumentException( "Invalid token type: $type" );
 		}
-		return new SQLiteToken( $type, $value );
+		return new WP_SQLite_Token( $type, $value );
 	}
 
 	private static function escape_value( $value ): string {
@@ -393,141 +393,3 @@ class SQLiteTokenFactory {
 		}
 	}
 }
-
-
-class SQLiteToken {
-
-	const TYPE_RAW        = 'TYPE_RAW';
-	const TYPE_IDENTIFIER = 'TYPE_IDENTIFIER';
-	const TYPE_VALUE      = 'TYPE_VALUE';
-	const TYPE_OPERATOR   = 'TYPE_OPERATOR';
-
-	public $type;
-	public $value;
-
-	public function __construct( string $type, $value ) {
-		$this->type  = $type;
-		$this->value = $value;
-	}
-}
-
-class SQLiteQueryBuilder {
-	private Expression $expression;
-
-	public static function stringify( Expression $expression ) {
-		return ( new SQLiteQueryBuilder( $expression ) )->build_query();
-	}
-
-	public function __construct( Expression $expression ) {
-		$this->expression = $expression;
-	}
-
-	public function build_query(): string {
-		$query_parts = array();
-		foreach ( $this->expression->get_tokens() as $element ) {
-			if ( $element instanceof SQLiteToken ) {
-				$query_parts[] = $this->process_token( $element );
-			} elseif ( $element instanceof Expression ) {
-				$query_parts[] = '(' . ( new self( $element ) )->build_query() . ')';
-			}
-		}
-		return implode( ' ', $query_parts );
-	}
-
-	private function process_token( SQLiteToken $token ): string {
-		switch ( $token->type ) {
-			case SQLiteToken::TYPE_RAW:
-			case SQLiteToken::TYPE_OPERATOR:
-				return $token->value;
-			case SQLiteToken::TYPE_IDENTIFIER:
-				return '"' . str_replace( '"', '""', $token->value ) . '"';
-			case SQLiteToken::TYPE_VALUE:
-				return $token->value;
-			default:
-				throw new InvalidArgumentException( 'Unknown token type: ' . $token->type );
-		}
-	}
-}
-
-class Expression {
-
-	public $elements;
-
-	public function __construct( array $elements = array() ) {
-		$new_elements = array();
-		$elements     = array_filter( $elements, fn( $x ) => $x );
-		foreach ( $elements as $element ) {
-			if ( is_object( $element ) && $element instanceof Expression ) {
-				$new_elements = array_merge( $new_elements, $element->elements );
-			} else {
-				$new_elements[] = $element;
-			}
-		}
-		$this->elements = $new_elements;
-	}
-
-	public function get_tokens() {
-		return $this->elements;
-	}
-
-	public function add_token( SQLiteToken $token ) {
-		$this->elements[] = $token;
-	}
-
-	public function add_tokens( array $tokens ) {
-		foreach ( $tokens as $token ) {
-			$this->add_token( $token );
-		}
-	}
-
-	public function add_expression( $expression ) {
-		$this->add_token( $expression );
-	}
-}
-
-class SQLiteExpression extends Expression {}
-
-class MySQLToSQLiteDriver {
-
-	private $pdo;
-
-	public function __construct( $dsn, $username = null, $password = null, $options = array() ) {
-		/* phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO */
-		$this->pdo = new PDO( $dsn, $username, $password, $options );
-	}
-
-	public function query( array $mysql_ast ) {
-		$transformer = new SQLTransformer( $mysql_ast, 'sqlite' );
-		$expression  = $transformer->transform();
-		if ( null !== $expression ) {
-			$query_string = (string) $expression;
-			return $this->pdo->query( $query_string );
-		} else {
-			throw new Exception( 'Failed to transform query.' );
-		}
-	}
-}
-
-// Example usage:
-
-// Sample parsed MySQL AST (Abstract Syntax Tree)
-// $ast = [
-//     'type' => 'select',
-//     'columns' => [
-//         ['name' => '*', 'type' => 'ALL'],
-//         ['name' => 'created_at', 'type' => 'DATETIME']
-//     ],
-//     'from' => 'users',
-//     'keywords' => ['SELECT', 'FROM'],
-//     'options' => ['DISTINCT']
-// ];
-
-// try {
-//     $driver = new MySQLToSQLiteDriver('sqlite::memory:');
-//     $result = $driver->query($ast);
-//     foreach ($result as $row) {
-//         print_r($row);
-//     }
-// } catch (Exception $e) {
-//     echo $e->getMessage();
-// }

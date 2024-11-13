@@ -29,6 +29,10 @@ class WP_MySQL_Token {
 		return WP_MySQL_Lexer::get_token_name( $this->type );
 	}
 
+	public function extract_value() {
+		return $this->get_text();
+	}
+
 	public function __toString() {
 		return $this->text . '<' . $this->type . ',' . $this->get_name() . '>';
 	}

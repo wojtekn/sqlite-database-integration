@@ -1,54 +1,7 @@
-<?php // phpcs:disable WordPress.Files.FileName.InvalidClassFileName
+<?php
 
-require_once __DIR__ . '/MySQLLexer.php';
-require_once __DIR__ . '/DynamicRecursiveDescentParser.php';
-require_once __DIR__ . '/SQLiteDriver.php';
-
-$query = <<<SQL
-WITH
-    mytable AS (select 1 as a, `b`.c from dual),
-    mytable2 AS (select 1 as a, `b`.c from dual)
-SELECT HIGH_PRIORITY SQL_SMALL_RESULT DISTINCT
-	CONCAT("a", "b"),
-	UPPER(z),
-    DATE_FORMAT(col_a, '%Y-%m-%d %H:%i:%s') as formatted_date,
-    DATE_ADD(col_b, INTERVAL 5 MONTH ) as date_plus_one,
-	col_a
-FROM
-my_table FORCE INDEX (`idx_department_id`),
-(SELECT `mycol`, 997482686 FROM "mytable") as subquery
-LEFT JOIN (SELECT a_column_yo from mytable) as t2
-    ON (t2.id = mytable.id AND t2.id = 1)
-WHERE 1 = 3
-GROUP BY col_a, col_b
-HAVING 1 = 2
-UNION SELECT * from table_cde
-ORDER BY col_a DESC, col_b ASC
-FOR UPDATE;
-;
-SQL;
-
-
-$grammar_data = include './grammar.php';
-$grammar      = new Grammar( $grammar_data );
-$driver       = new MySQLonSQLiteDriver( $grammar );
-// $parse_tree = $parser->parse();
-// print_r($parse_tree);
-// die();
-// echo 'a';
-
-$query = <<<SQL
-SELECT VALUES("col_a")
-SQL;
-
-echo $driver->run_query( $query );
-die();
-// $transformer = new SQLTransformer($parse_tree, 'sqlite');
-// $expression = $transformer->transform();
-// print_r($expression);
-
-class MySQLonSQLiteDriver {
-	private $grammar                 = false;
+class WP_SQLite_Driver {
+	private $grammar;
 	private $has_sql_calc_found_rows = false;
 	private $has_found_rows_call     = false;
 	private $last_calc_rows_result   = null;
@@ -62,19 +15,22 @@ class MySQLonSQLiteDriver {
 		$this->has_found_rows_call     = false;
 		$this->last_calc_rows_result   = null;
 
-		$parser     = new WP_MySQL_Parser( $this->grammar, tokenize_query( $query ) );
-		$parse_tree = $parser->parse();
-		$expr       = $this->translate_query( $parse_tree );
-		$expr       = $this->rewrite_sql_calc_found_rows( $expr );
+		$lexer  = new WP_MySQL_Lexer( $query );
+		$tokens = $lexer->remaining_tokens();
 
-		$sqlite_query = SQLiteQueryBuilder::stringify( $expr ) . '';
+		$parser = new WP_MySQL_Parser( $this->grammar, $tokens );
+		$ast    = $parser->parse();
+		$expr   = $this->translate_query( $ast );
+		$expr   = $this->rewrite_sql_calc_found_rows( $expr );
 
-		// Returning the expery just for now for testing. In the end, we'll
+		$sqlite_query = WP_SQLite_Query_Builder::stringify( $expr );
+
+		// Returning the query just for now for testing. In the end, we'll
 		// run it and return the SQLite interaction result.
 		return $sqlite_query;
 	}
 
-	private function rewrite_sql_calc_found_rows( SQLiteExpression $expr ) {
+	private function rewrite_sql_calc_found_rows( WP_SQLite_Expression $expr ) {
 		if ( $this->has_found_rows_call && ! $this->has_sql_calc_found_rows && null === $this->last_calc_rows_result ) {
 			throw new Exception( 'FOUND_ROWS() called without SQL_CALC_FOUND_ROWS' );
 		}
@@ -82,11 +38,11 @@ class MySQLonSQLiteDriver {
 		if ( $this->has_sql_calc_found_rows ) {
 			$expr_to_run = $expr;
 			if ( $this->has_found_rows_call ) {
-				$expr_without_found_rows = new SQLiteExpression( array() );
+				$expr_without_found_rows = new WP_SQLite_Expression( array() );
 				foreach ( $expr->elements as $k => $element ) {
-					if ( SQLiteToken::TYPE_IDENTIFIER === $element->type && 'FOUND_ROWS' === $element->value ) {
+					if ( WP_SQLite_Token::TYPE_IDENTIFIER === $element->type && 'FOUND_ROWS' === $element->value ) {
 						$expr_without_found_rows->add_token(
-							SQLiteTokenFactory::value( 0 )
+							WP_SQLite_Token_Factory::value( 0 )
 						);
 					} else {
 						$expr_without_found_rows->add_token( $element );
@@ -96,23 +52,22 @@ class MySQLonSQLiteDriver {
 			}
 
 			// ...remove the LIMIT clause...
-			$query = 'SELECT COUNT(*) as cnt FROM (' . SQLiteQueryBuilder::stringify( $expr_to_run ) . ');';
+			$query = 'SELECT COUNT(*) as cnt FROM (' . WP_SQLite_Query_Builder::stringify( $expr_to_run ) . ');';
 
 			// ...run $query...
 			// $result = ...
-
-			$this->last_calc_rows_result = $result['cnt'];
+			// $this->last_calc_rows_result = $result['cnt'];
 		}
 
 		if ( ! $this->has_found_rows_call ) {
 			return $expr;
 		}
 
-		$expr_with_found_rows_result = new SQLiteExpression( array() );
+		$expr_with_found_rows_result = new WP_SQLite_Expression( array() );
 		foreach ( $expr->elements as $k => $element ) {
-			if ( SQLiteToken::TYPE_IDENTIFIER === $element->type && 'FOUND_ROWS' === $element->value ) {
+			if ( WP_SQLite_Token::TYPE_IDENTIFIER === $element->type && 'FOUND_ROWS' === $element->value ) {
 				$expr_with_found_rows_result->add_token(
-					SQLiteTokenFactory::value( $this->last_calc_rows_result )
+					WP_SQLite_Token_Factory::value( $this->last_calc_rows_result )
 				);
 			} else {
 				$expr_with_found_rows_result->add_token( $element );
@@ -121,55 +76,54 @@ class MySQLonSQLiteDriver {
 		return $expr_with_found_rows_result;
 	}
 
-	private function translate_query( $parse_tree ) {
-		if ( null === $parse_tree ) {
+	private function translate_query( $ast ) {
+		if ( null === $ast ) {
 			return null;
 		}
 
-		if ( $parse_tree instanceof WP_MySQL_Token ) {
-			$token = $parse_tree;
+		if ( $ast instanceof WP_MySQL_Token ) {
+			$token = $ast;
 			switch ( $token->type ) {
 				case WP_MySQL_Lexer::EOF:
-					return new SQLiteExpression( array() );
+					return new WP_SQLite_Expression( array() );
 
 				case WP_MySQL_Lexer::IDENTIFIER:
-					return new SQLiteExpression(
+					return new WP_SQLite_Expression(
 						array(
-							SQLiteTokenFactory::identifier(
+							WP_SQLite_Token_Factory::identifier(
 								trim( $token->text, '`"' )
 							),
 						)
 					);
 
 				default:
-					return new SQLiteExpression(
+					return new WP_SQLite_Expression(
 						array(
-							SQLiteTokenFactory::raw( $token->text ),
+							WP_SQLite_Token_Factory::raw( $token->text ),
 						)
 					);
 			}
 		}
 
-		if ( ! ( $parse_tree instanceof WP_Parser_Node ) ) {
-			throw new Exception( 'translateQuery only accepts MySQLToken and ParseTree instances' );
+		if ( ! ( $ast instanceof WP_Parser_Node ) ) {
+			throw new Exception( 'translate_query only accepts WP_MySQL_Token and WP_Parser_Node instances' );
 		}
 
-		$rule_name = $parse_tree->rule_name;
+		$rule_name = $ast->rule_name;
 
 		switch ( $rule_name ) {
 			case 'indexHintList':
-				// SQLite doesn't support index hints. Let's
-				// skip them.
+				// SQLite doesn't support index hints. Let's skip them.
 				return null;
 
 			case 'querySpecOption':
-				$token = $parse_tree->get_token();
+				$token = $ast->get_token();
 				switch ( $token->type ) {
 					case WP_MySQL_Lexer::ALL_SYMBOL:
 					case WP_MySQL_Lexer::DISTINCT_SYMBOL:
-						return new SQLiteExpression(
+						return new WP_SQLite_Expression(
 							array(
-								SQLiteTokenFactory::raw( $token->text ),
+								WP_SQLite_Token_Factory::raw( $token->text ),
 							)
 						);
 					case WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL:
@@ -179,7 +133,7 @@ class MySQLonSQLiteDriver {
 						// we'll need to run the current SQL query without any
 						// LIMIT clause, and then substitute the FOUND_ROWS()
 						// function with a literal number of rows found.
-						return new SQLiteExpression( array() );
+						return new WP_SQLite_Expression( array() );
 				}
 				// Otherwise, fall through.
 
@@ -188,8 +142,8 @@ class MySQLonSQLiteDriver {
 				// FROM DUAL statement, as FROM mytable, DUAL is a syntax
 				// error.
 				if (
-					$parse_tree->has_token( WP_MySQL_Lexer::DUAL_SYMBOL ) &&
-					! $parse_tree->has_child( 'tableReferenceList' )
+					$ast->has_token( WP_MySQL_Lexer::DUAL_SYMBOL ) &&
+					! $ast->has_child( 'tableReferenceList' )
 				) {
 					return null;
 				}
@@ -228,6 +182,7 @@ class MySQLonSQLiteDriver {
 			case 'queryExpressionParens':
 			case 'queryPrimary':
 			case 'querySpecification':
+			case 'queryTerm':
 			case 'selectAlias':
 			case 'selectItem':
 			case 'selectItemList':
@@ -264,26 +219,26 @@ class MySQLonSQLiteDriver {
 			case 'direction':
 			case 'orderExpression':
 				$child_expressions = array();
-				foreach ( $parse_tree->children as $child ) {
+				foreach ( $ast->children as $child ) {
 					$child_expressions[] = $this->translate_query( $child );
 				}
-				return new SQLiteExpression( $child_expressions );
+				return new WP_SQLite_Expression( $child_expressions );
 
 			case 'textStringLiteral':
-				return new SQLiteExpression(
+				return new WP_SQLite_Expression(
 					array(
-						$parse_tree->has_token( WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT ) ?
-						SQLiteTokenFactory::double_quoted_value( $parse_tree->get_token( WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT )->text ) : false,
-						$parse_tree->has_token( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT ) ?
-						SQLiteTokenFactory::raw( $parse_tree->get_token( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT )->text ) : false,
+						$ast->has_token( WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT ) ?
+							WP_SQLite_Token_Factory::double_quoted_value( $ast->get_token( WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT )->text ) : false,
+						$ast->has_token( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT ) ?
+							WP_SQLite_Token_Factory::raw( $ast->get_token( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT )->text ) : false,
 					)
 				);
 
 			case 'functionCall':
-				return $this->translate_function_call( $parse_tree );
+				return $this->translate_function_call( $ast );
 
 			case 'runtimeFunctionCall':
-				return $this->translate_runtime_function_call( $parse_tree );
+				return $this->translate_runtime_function_call( $ast );
 
 			default:
 				// var_dump(count($ast->children));
@@ -292,9 +247,9 @@ class MySQLonSQLiteDriver {
 				//     echo $child->getText();
 				//     echo "\n\n";
 				// }
-				return new SQLiteExpression(
+				return new WP_SQLite_Expression(
 					array(
-						SQLiteTokenFactory::raw(
+						WP_SQLite_Token_Factory::raw(
 							$rule_name
 						),
 					)
@@ -302,33 +257,33 @@ class MySQLonSQLiteDriver {
 		}
 	}
 
-	private function translate_runtime_function_call( $parse_tree ): SQLiteExpression {
-		$name_token = $parse_tree->children[0];
+	private function translate_runtime_function_call( $ast ): WP_SQLite_Expression {
+		$name_token = $ast->children[0];
 
 		switch ( strtoupper( $name_token->text ) ) {
 			case 'ADDDATE':
 			case 'DATE_ADD':
-				$args     = $parse_tree->get_children( 'expr' );
-				$interval = $parse_tree->get_child( 'interval' );
+				$args     = $ast->get_children( 'expr' );
+				$interval = $ast->get_child( 'interval' );
 				$timespan = $interval->get_child( 'intervalTimeStamp' )->get_token()->text;
-				return SQLiteTokenFactory::create_function(
+				return WP_SQLite_Token_Factory::create_function(
 					'DATETIME',
 					array(
 						$this->translate_query( $args[0] ),
-						new SQLiteExpression(
+						new WP_SQLite_Expression(
 							array(
-								SQLiteTokenFactory::value( '+' ),
-								SQLiteTokenFactory::raw( '||' ),
+								WP_SQLite_Token_Factory::value( '+' ),
+								WP_SQLite_Token_Factory::raw( '||' ),
 								$this->translate_query( $args[1] ),
-								SQLiteTokenFactory::raw( '||' ),
-								SQLiteTokenFactory::value( $timespan ),
+								WP_SQLite_Token_Factory::raw( '||' ),
+								WP_SQLite_Token_Factory::value( $timespan ),
 							)
 						),
 					)
 				);
 
 			case 'DATE_SUB':
-				// return new Expression([
+				// return new WP_SQLite_Expression([
 				//     SQLiteTokenFactory::raw("DATETIME("),
 				//     $args[0],
 				//     SQLiteTokenFactory::raw(", '-'"),
@@ -337,16 +292,16 @@ class MySQLonSQLiteDriver {
 				// ]);
 
 			case 'VALUES':
-				$column = $parse_tree->get_child()->get_descendant( 'pureIdentifier' );
+				$column = $ast->get_child()->get_descendant( 'pureIdentifier' );
 				if ( ! $column ) {
 					throw new Exception( 'VALUES() calls without explicit column names are unsupported' );
 				}
 
-				$colname = $column->get_token()->extractValue();
-				return new SQLiteExpression(
+				$colname = $column->get_token()->extract_value();
+				return new WP_SQLite_Expression(
 					array(
-						SQLiteTokenFactory::raw( 'excluded.' ),
-						SQLiteTokenFactory::identifier( $colname ),
+						WP_SQLite_Token_Factory::raw( 'excluded.' ),
+						WP_SQLite_Token_Factory::identifier( $colname ),
 					)
 				);
 			default:
@@ -354,7 +309,7 @@ class MySQLonSQLiteDriver {
 		}
 	}
 
-	private function translate_function_call( $function_call_tree ): SQLiteExpression {
+	private function translate_function_call( $function_call_tree ): WP_SQLite_Expression {
 		$name = $function_call_tree->get_child( 'pureIdentifier' )->get_token()->text;
 		$args = array();
 		foreach ( $function_call_tree->get_child( 'udfExprList' )->get_children() as $node ) {
@@ -383,27 +338,27 @@ class MySQLonSQLiteDriver {
 			case 'PI':
 			case 'LTRIM':
 			case 'RTRIM':
-				return SQLiteTokenFactory::create_function( $name, $args );
+				return WP_SQLite_Token_Factory::create_function( $name, $args );
 
 			case 'CEIL':
 			case 'CEILING':
-				return SQLiteTokenFactory::create_function( 'CEIL', $args );
+				return WP_SQLite_Token_Factory::create_function( 'CEIL', $args );
 
 			case 'COT':
-				return new Expression(
+				return new WP_SQLite_Expression(
 					array(
-						SQLiteTokenFactory::raw( '1 / ' ),
-						SQLiteTokenFactory::create_function( 'TAN', $args ),
+						WP_SQLite_Token_Factory::raw( '1 / ' ),
+						WP_SQLite_Token_Factory::create_function( 'TAN', $args ),
 					)
 				);
 
 			case 'LN':
 			case 'LOG':
 			case 'LOG2':
-				return SQLiteTokenFactory::create_function( 'LOG', $args );
+				return WP_SQLite_Token_Factory::create_function( 'LOG', $args );
 
 			case 'LOG10':
-				return SQLiteTokenFactory::create_function( 'LOG10', $args );
+				return WP_SQLite_Token_Factory::create_function( 'LOG10', $args );
 
 			// case 'MOD':
 			//     return $this->transformBinaryOperation([
@@ -414,26 +369,26 @@ class MySQLonSQLiteDriver {
 
 			case 'POW':
 			case 'POWER':
-				return SQLiteTokenFactory::create_function( 'POW', $args );
+				return WP_SQLite_Token_Factory::create_function( 'POW', $args );
 
 			// String functions
 			case 'ASCII':
-				return SQLiteTokenFactory::create_function( 'UNICODE', $args );
+				return WP_SQLite_Token_Factory::create_function( 'UNICODE', $args );
 			case 'CHAR_LENGTH':
 			case 'LENGTH':
-				return SQLiteTokenFactory::create_function( 'LENGTH', $args );
+				return WP_SQLite_Token_Factory::create_function( 'LENGTH', $args );
 			case 'CONCAT':
-				$concated = array( SQLiteTokenFactory::raw( '(' ) );
+				$concated = array( WP_SQLite_Token_Factory::raw( '(' ) );
 				foreach ( $args as $k => $arg ) {
 					$concated[] = $arg;
 					if ( $k < count( $args ) - 1 ) {
-						$concated[] = SQLiteTokenFactory::raw( '||' );
+						$concated[] = WP_SQLite_Token_Factory::raw( '||' );
 					}
 				}
-				$concated[] = SQLiteTokenFactory::raw( ')' );
-				return new SQLiteExpression( $concated );
+				$concated[] = WP_SQLite_Token_Factory::raw( ')' );
+				return new WP_SQLite_Expression( $concated );
 			// case 'CONCAT_WS':
-			//     return new Expression([
+			//     return new WP_SQLite_Expression([
 			//         SQLiteTokenFactory::raw("REPLACE("),
 			//         implode(" || ", array_slice($args, 1)),
 			//         SQLiteTokenFactory::raw(", '', "),
@@ -441,12 +396,12 @@ class MySQLonSQLiteDriver {
 			//         SQLiteTokenFactory::raw(")")
 			//     ]);
 			case 'INSTR':
-				return SQLiteTokenFactory::create_function( 'INSTR', $args );
+				return WP_SQLite_Token_Factory::create_function( 'INSTR', $args );
 			case 'LCASE':
 			case 'LOWER':
-				return SQLiteTokenFactory::create_function( 'LOWER', $args );
+				return WP_SQLite_Token_Factory::create_function( 'LOWER', $args );
 			case 'LEFT':
-				return SQLiteTokenFactory::create_function(
+				return WP_SQLite_Token_Factory::create_function(
 					'SUBSTR',
 					array(
 						$args[0],
@@ -455,7 +410,7 @@ class MySQLonSQLiteDriver {
 					)
 				);
 			case 'LOCATE':
-				return SQLiteTokenFactory::create_function(
+				return WP_SQLite_Token_Factory::create_function(
 					'INSTR',
 					array(
 						$args[1],
@@ -463,44 +418,44 @@ class MySQLonSQLiteDriver {
 					)
 				);
 			case 'REPEAT':
-				return new Expression(
+				return new WP_SQLite_Expression(
 					array(
-						SQLiteTokenFactory::raw( "REPLACE(CHAR(32), ' ', " ),
+						WP_SQLite_Token_Factory::raw( "REPLACE(CHAR(32), ' ', " ),
 						$args[0],
-						SQLiteTokenFactory::raw( ')' ),
+						WP_SQLite_Token_Factory::raw( ')' ),
 					)
 				);
 
 			case 'REPLACE':
-				return new Expression(
+				return new WP_SQLite_Expression(
 					array(
-						SQLiteTokenFactory::raw( 'REPLACE(' ),
+						WP_SQLite_Token_Factory::raw( 'REPLACE(' ),
 						implode( ', ', $args ),
-						SQLiteTokenFactory::raw( ')' ),
+						WP_SQLite_Token_Factory::raw( ')' ),
 					)
 				);
 			case 'RIGHT':
-				return new Expression(
+				return new WP_SQLite_Expression(
 					array(
-						SQLiteTokenFactory::raw( 'SUBSTR(' ),
+						WP_SQLite_Token_Factory::raw( 'SUBSTR(' ),
 						$args[0],
-						SQLiteTokenFactory::raw( ', -(' ),
+						WP_SQLite_Token_Factory::raw( ', -(' ),
 						$args[1],
-						SQLiteTokenFactory::raw( '))' ),
+						WP_SQLite_Token_Factory::raw( '))' ),
 					)
 				);
 			case 'SPACE':
-				return new Expression(
+				return new WP_SQLite_Expression(
 					array(
-						SQLiteTokenFactory::raw( "REPLACE(CHAR(32), ' ', '')" ),
+						WP_SQLite_Token_Factory::raw( "REPLACE(CHAR(32), ' ', '')" ),
 					)
 				);
 			case 'SUBSTRING':
 			case 'SUBSTR':
-				return SQLiteTokenFactory::create_function( 'SUBSTR', $args );
+				return WP_SQLite_Token_Factory::create_function( 'SUBSTR', $args );
 			case 'UCASE':
 			case 'UPPER':
-				return SQLiteTokenFactory::create_function( 'UPPER', $args );
+				return WP_SQLite_Token_Factory::create_function( 'UPPER', $args );
 
 			case 'DATE_FORMAT':
 				$mysql_date_format_to_sqlite_strftime = array(
@@ -540,113 +495,113 @@ class MySQLonSQLiteDriver {
 				$format     = $args[1]->elements[0]->value;
 				$new_format = strtr( $format, $mysql_date_format_to_sqlite_strftime );
 
-				return SQLiteTokenFactory::create_function(
+				return WP_SQLite_Token_Factory::create_function(
 					'STRFTIME',
 					array(
-						new Expression( array( SQLiteTokenFactory::raw( $new_format ) ) ),
-						new Expression( array( $args[0] ) ),
+						new WP_SQLite_Expression( array( WP_SQLite_Token_Factory::raw( $new_format ) ) ),
+						new WP_SQLite_Expression( array( $args[0] ) ),
 					)
 				);
 			case 'DATEDIFF':
-				return new Expression(
+				return new WP_SQLite_Expression(
 					array(
-						SQLiteTokenFactory::create_function( 'JULIANDAY', array( $args[0] ) ),
-						SQLiteTokenFactory::raw( ' - ' ),
-						SQLiteTokenFactory::create_function( 'JULIANDAY', array( $args[1] ) ),
+						WP_SQLite_Token_Factory::create_function( 'JULIANDAY', array( $args[0] ) ),
+						WP_SQLite_Token_Factory::raw( ' - ' ),
+						WP_SQLite_Token_Factory::create_function( 'JULIANDAY', array( $args[1] ) ),
 					)
 				);
 			case 'DAYNAME':
-				return SQLiteTokenFactory::create_function(
+				return WP_SQLite_Token_Factory::create_function(
 					'STRFTIME',
-					array( '%w', ...$args )
+					array_merge( array( '%w' ), $args )
 				);
 			case 'DAY':
 			case 'DAYOFMONTH':
-				return new Expression(
+				return new WP_SQLite_Expression(
 					array(
-						SQLiteTokenFactory::raw( "CAST('" ),
-						SQLiteTokenFactory::create_function( 'STRFTIME', array( '%d', ...$args ) ),
-						SQLiteTokenFactory::raw( ") AS INTEGER'" ),
+						WP_SQLite_Token_Factory::raw( "CAST('" ),
+						WP_SQLite_Token_Factory::create_function( 'STRFTIME', array_merge( array( '%d' ), $args ) ),
+						WP_SQLite_Token_Factory::raw( ") AS INTEGER'" ),
 					)
 				);
 			case 'DAYOFWEEK':
-				return new Expression(
+				return new WP_SQLite_Expression(
 					array(
-						SQLiteTokenFactory::raw( "CAST('" ),
-						SQLiteTokenFactory::create_function( 'STRFTIME', array( '%w', ...$args ) ),
-						SQLiteTokenFactory::raw( ") + 1 AS INTEGER'" ),
+						WP_SQLite_Token_Factory::raw( "CAST('" ),
+						WP_SQLite_Token_Factory::create_function( 'STRFTIME', array_merge( array( '%w' ), $args ) ),
+						WP_SQLite_Token_Factory::raw( ") + 1 AS INTEGER'" ),
 					)
 				);
 			case 'DAYOFYEAR':
-				return new Expression(
+				return new WP_SQLite_Expression(
 					array(
-						SQLiteTokenFactory::raw( "CAST('" ),
-						SQLiteTokenFactory::create_function( 'STRFTIME', array( '%j', ...$args ) ),
-						SQLiteTokenFactory::raw( ") AS INTEGER'" ),
+						WP_SQLite_Token_Factory::raw( "CAST('" ),
+						WP_SQLite_Token_Factory::create_function( 'STRFTIME', array_merge( array( '%j' ), $args ) ),
+						WP_SQLite_Token_Factory::raw( ") AS INTEGER'" ),
 					)
 				);
 			case 'HOUR':
-				return new Expression(
+				return new WP_SQLite_Expression(
 					array(
-						SQLiteTokenFactory::raw( "CAST('" ),
-						SQLiteTokenFactory::create_function( 'STRFTIME', array( '%H', ...$args ) ),
-						SQLiteTokenFactory::raw( ") AS INTEGER'" ),
+						WP_SQLite_Token_Factory::raw( "CAST('" ),
+						WP_SQLite_Token_Factory::create_function( 'STRFTIME', array_merge( array( '%H' ), $args ) ),
+						WP_SQLite_Token_Factory::raw( ") AS INTEGER'" ),
 					)
 				);
 			case 'MINUTE':
-				return new Expression(
+				return new WP_SQLite_Expression(
 					array(
-						SQLiteTokenFactory::raw( "CAST('" ),
-						SQLiteTokenFactory::create_function( 'STRFTIME', array( '%M', ...$args ) ),
-						SQLiteTokenFactory::raw( ") AS INTEGER'" ),
+						WP_SQLite_Token_Factory::raw( "CAST('" ),
+						WP_SQLite_Token_Factory::create_function( 'STRFTIME', array_merge( array( '%M' ), $args ) ),
+						WP_SQLite_Token_Factory::raw( ") AS INTEGER'" ),
 					)
 				);
 			case 'MONTH':
-				return new Expression(
+				return new WP_SQLite_Expression(
 					array(
-						SQLiteTokenFactory::raw( "CAST('" ),
-						SQLiteTokenFactory::create_function( 'STRFTIME', array( '%m', ...$args ) ),
-						SQLiteTokenFactory::raw( ") AS INTEGER'" ),
+						WP_SQLite_Token_Factory::raw( "CAST('" ),
+						WP_SQLite_Token_Factory::create_function( 'STRFTIME', array_merge( array( '%m' ), $args ) ),
+						WP_SQLite_Token_Factory::raw( ") AS INTEGER'" ),
 					)
 				);
 			case 'MONTHNAME':
-				return SQLiteTokenFactory::create_function( 'STRFTIME', array( '%m', ...$args ) );
+				return WP_SQLite_Token_Factory::create_function( 'STRFTIME', array_merge( array( '%m' ), $args ) );
 			case 'NOW':
-				return new Expression(
+				return new WP_SQLite_Expression(
 					array(
-						SQLiteTokenFactory::raw( 'CURRENT_TIMESTAMP()' ),
+						WP_SQLite_Token_Factory::raw( 'CURRENT_TIMESTAMP()' ),
 					)
 				);
 			case 'SECOND':
-				return new Expression(
+				return new WP_SQLite_Expression(
 					array(
-						SQLiteTokenFactory::raw( "CAST('" ),
-						SQLiteTokenFactory::create_function( 'STRFTIME', array( '%S', ...$args ) ),
-						SQLiteTokenFactory::raw( ") AS INTEGER'" ),
+						WP_SQLite_Token_Factory::raw( "CAST('" ),
+						WP_SQLite_Token_Factory::create_function( 'STRFTIME', array_merge( array( '%S' ), $args ) ),
+						WP_SQLite_Token_Factory::raw( ") AS INTEGER'" ),
 					)
 				);
 			case 'TIMESTAMP':
-				return new Expression(
-					array(
-						SQLiteTokenFactory::raw( 'DATETIME(' ),
-						...$args,
-						SQLiteTokenFactory::raw( ')' ),
+				return new WP_SQLite_Expression(
+					array_merge(
+						array( WP_SQLite_Token_Factory::raw( 'DATETIME(' ) ),
+						$args,
+						array( WP_SQLite_Token_Factory::raw( ')' ) )
 					)
 				);
 			case 'YEAR':
-				return new Expression(
+				return new WP_SQLite_Expression(
 					array(
-						SQLiteTokenFactory::raw( "CAST('" ),
-						SQLiteTokenFactory::create_function( 'STRFTIME', array( '%Y', ...$args ) ),
-						SQLiteTokenFactory::raw( ") AS INTEGER'" ),
+						WP_SQLite_Token_Factory::raw( "CAST('" ),
+						WP_SQLite_Token_Factory::create_function( 'STRFTIME', array_merge( array( '%Y' ), $args ) ),
+						WP_SQLite_Token_Factory::raw( ") AS INTEGER'" ),
 					)
 				);
 			case 'FOUND_ROWS':
 				$this->has_found_rows_call = true;
-				return new Expression(
+				return new WP_SQLite_Expression(
 					array(
 						// Post-processed in handleSqlCalcFoundRows()
-						SQLiteTokenFactory::raw( 'FOUND_ROWS' ),
+						WP_SQLite_Token_Factory::raw( 'FOUND_ROWS' ),
 					)
 				);
 			default:
