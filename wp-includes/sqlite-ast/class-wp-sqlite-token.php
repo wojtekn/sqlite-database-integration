@@ -1,5 +1,8 @@
 <?php
 
+// @TODO: Remove the namespace and use statements when replacing the old driver.
+namespace WIP;
+
 class WP_SQLite_Token {
 	const TYPE_RAW        = 'TYPE_RAW';
 	const TYPE_IDENTIFIER = 'TYPE_IDENTIFIER';

@@ -1,5 +1,16 @@
 <?php
 
+// @TODO: Remove the namespace and use statements when replacing the old driver.
+namespace WIP;
+
+use Exception;
+use PDO;
+use WP_MySQL_Lexer;
+use WP_MySQL_Parser;
+use WP_MySQL_Token;
+use WP_Parser_Grammar;
+use WP_Parser_Node;
+
 class WP_SQLite_Driver {
 	private $grammar;
 	private $has_sql_calc_found_rows = false;

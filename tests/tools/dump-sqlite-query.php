@@ -12,6 +12,8 @@ require_once __DIR__ . '/../../wp-includes/sqlite-ast/class-wp-sqlite-token-fact
 require_once __DIR__ . '/../../wp-includes/sqlite-ast/class-wp-sqlite-token.php';
 require_once __DIR__ . '/../../wp-includes/sqlite-ast/class-wp-sqlite-query-builder.php';
 
+use WIP\WP_SQLite_Driver;
+
 $grammar_data = include __DIR__ . '/../../wp-includes/mysql/mysql-grammar.php';
 $grammar      = new WP_Parser_Grammar( $grammar_data );
 $driver       = new WP_SQLite_Driver( $grammar );

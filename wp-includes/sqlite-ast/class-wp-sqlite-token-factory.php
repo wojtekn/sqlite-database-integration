@@ -1,5 +1,10 @@
 <?php
 
+// @TODO: Remove the namespace and use statements when replacing the old driver.
+namespace WIP;
+
+use InvalidArgumentException;
+
 class WP_SQLite_Token_Factory {
 	private static $valid_types = array(
 		WP_SQLite_Token::TYPE_RAW,

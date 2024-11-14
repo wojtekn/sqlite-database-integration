@@ -1,5 +1,8 @@
 <?php
 
+// @TODO: Remove the namespace and use statements when replacing the old driver.
+namespace WIP;
+
 class WP_SQLite_Expression {
 	public $elements;
 
