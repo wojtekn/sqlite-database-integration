@@ -11,17 +11,36 @@ use WP_MySQL_Token;
 use WP_Parser_Grammar;
 use WP_Parser_Node;
 
+$grammar = new WP_Parser_Grammar( require __DIR__ . '/../../wp-includes/mysql/mysql-grammar.php' );
+
 class WP_SQLite_Driver {
+	/**
+	 * @var WP_Parser_Grammar
+	 */
 	private $grammar;
+
+	/**
+	 * @var PDO
+	 */
+	private $pdo;
+
+	private $results;
+
 	private $has_sql_calc_found_rows = false;
 	private $has_found_rows_call     = false;
 	private $last_calc_rows_result   = null;
 
-	public function __construct( $grammar ) {
+	public function __construct( PDO $pdo ) {
+		global $grammar;
+		$this->pdo     = $pdo;
 		$this->grammar = $grammar;
+
+		$pdo->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION );
+		$pdo->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
+		$pdo->setAttribute( PDO::ATTR_TIMEOUT, 5 );
 	}
 
-	public function run_query( $query ) {
+	public function query( $query ) {
 		$this->has_sql_calc_found_rows = false;
 		$this->has_found_rows_call     = false;
 		$this->last_calc_rows_result   = null;
@@ -32,13 +51,37 @@ class WP_SQLite_Driver {
 		$parser = new WP_MySQL_Parser( $this->grammar, $tokens );
 		$ast    = $parser->parse();
 		$expr   = $this->translate_query( $ast );
-		$expr   = $this->rewrite_sql_calc_found_rows( $expr );
+		//$expr   = $this->rewrite_sql_calc_found_rows( $expr );
+
+		if ( null === $expr ) {
+			return false;
+		}
 
 		$sqlite_query = WP_SQLite_Query_Builder::stringify( $expr );
 
 		// Returning the query just for now for testing. In the end, we'll
 		// run it and return the SQLite interaction result.
-		return $sqlite_query;
+		//return $sqlite_query;
+
+		if ( ! $sqlite_query ) {
+			return false;
+		}
+
+		$is_select     = (bool) $ast->get_descendant( 'selectStatement' );
+		$statement     = $this->pdo->prepare( $sqlite_query );
+		$return_value  = $statement->execute();
+		$this->results = $return_value;
+		if ( $is_select ) {
+			$this->results = $statement->fetchAll( PDO::FETCH_OBJ );
+		}
+		return $return_value;
+	}
+
+	public function get_error_message() {
+	}
+
+	public function get_query_results() {
+		return $this->results;
 	}
 
 	private function rewrite_sql_calc_found_rows( WP_SQLite_Expression $expr ) {
@@ -252,6 +295,7 @@ class WP_SQLite_Driver {
 				return $this->translate_runtime_function_call( $ast );
 
 			default:
+				return null;
 				// var_dump(count($ast->children));
 				// foreach($ast->children as $child) {
 				//     var_dump(get_class($child));

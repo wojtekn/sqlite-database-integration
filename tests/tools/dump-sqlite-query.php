@@ -14,10 +14,8 @@ require_once __DIR__ . '/../../wp-includes/sqlite-ast/class-wp-sqlite-query-buil
 
 use WIP\WP_SQLite_Driver;
 
-$grammar_data = include __DIR__ . '/../../wp-includes/mysql/mysql-grammar.php';
-$grammar      = new WP_Parser_Grammar( $grammar_data );
-$driver       = new WP_SQLite_Driver( $grammar );
+$driver = new WP_SQLite_Driver( new PDO( 'sqlite::memory:' ) );
 
 $query = "SELECT * FROM t1 LEFT JOIN t2 ON t1.id = t2.t1_id WHERE t1.name = 'abc'";
 
-echo $driver->run_query( $query );
+echo $driver->query( $query );
