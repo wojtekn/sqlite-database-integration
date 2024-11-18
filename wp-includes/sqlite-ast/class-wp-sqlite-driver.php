@@ -5,662 +5,778 @@ namespace WIP;
 
 use Exception;
 use PDO;
+use PDOException;
+use PDOStatement;
+use SQLite3;
 use WP_MySQL_Lexer;
 use WP_MySQL_Parser;
-use WP_MySQL_Token;
 use WP_Parser_Grammar;
-use WP_Parser_Node;
-
-$grammar = new WP_Parser_Grammar( require __DIR__ . '/../../wp-includes/mysql/mysql-grammar.php' );
+use WP_SQLite_PDO_User_Defined_Functions;
 
 class WP_SQLite_Driver {
+	const GRAMMAR_PATH = __DIR__ . '/../../wp-includes/mysql/mysql-grammar.php';
+
+	const SQLITE_BUSY   = 5;
+	const SQLITE_LOCKED = 6;
+
+	const DATA_TYPES_CACHE_TABLE = '_mysql_data_types_cache';
+
+	const CREATE_DATA_TYPES_CACHE_TABLE = 'CREATE TABLE IF NOT EXISTS _mysql_data_types_cache (
+		`table` TEXT NOT NULL,
+		`column_or_index` TEXT NOT NULL,
+		`mysql_type` TEXT NOT NULL,
+		PRIMARY KEY(`table`, `column_or_index`)
+	);';
+
 	/**
 	 * @var WP_Parser_Grammar
 	 */
-	private $grammar;
+	private static $grammar;
 
 	/**
-	 * @var PDO
+	 * Class variable to reference to the PDO instance.
+	 *
+	 * @access private
+	 *
+	 * @var PDO object
 	 */
 	private $pdo;
 
-	private $results;
+	/**
+	 * The database version.
+	 *
+	 * This is used here to avoid PHP warnings in the health screen.
+	 *
+	 * @var string
+	 */
+	public $client_info = '';
 
-	private $has_sql_calc_found_rows = false;
-	private $has_found_rows_call     = false;
-	private $last_calc_rows_result   = null;
+	/**
+	 * Last executed MySQL query.
+	 *
+	 * @var string
+	 */
+	public $mysql_query;
 
-	public function __construct( PDO $pdo ) {
-		global $grammar;
-		$this->pdo     = $pdo;
-		$this->grammar = $grammar;
+	/**
+	 * A list of executed SQLite queries.
+	 *
+	 * @var array
+	 */
+	public $executed_sqlite_queries = array();
 
-		$pdo->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION );
-		$pdo->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
-		$pdo->setAttribute( PDO::ATTR_TIMEOUT, 5 );
-	}
+	/**
+	 * The affected table name.
+	 *
+	 * @var array
+	 */
+	private $table_name = array();
 
-	public function query( $query ) {
-		$this->has_sql_calc_found_rows = false;
-		$this->has_found_rows_call     = false;
-		$this->last_calc_rows_result   = null;
+	/**
+	 * The type of the executed query (SELECT, INSERT, etc).
+	 *
+	 * @var array
+	 */
+	private $query_type = array();
 
-		$lexer  = new WP_MySQL_Lexer( $query );
-		$tokens = $lexer->remaining_tokens();
+	/**
+	 * The columns to insert.
+	 *
+	 * @var array
+	 */
+	private $insert_columns = array();
 
-		$parser = new WP_MySQL_Parser( $this->grammar, $tokens );
-		$ast    = $parser->parse();
-		$expr   = $this->translate_query( $ast );
-		//$expr   = $this->rewrite_sql_calc_found_rows( $expr );
+	/**
+	 * Class variable to store the result of the query.
+	 *
+	 * @access private
+	 *
+	 * @var array reference to the PHP object
+	 */
+	private $results = null;
 
-		if ( null === $expr ) {
-			return false;
+	/**
+	 * Class variable to check if there is an error.
+	 *
+	 * @var boolean
+	 */
+	public $is_error = false;
+
+	/**
+	 * Class variable to store the file name and function to cause error.
+	 *
+	 * @access private
+	 *
+	 * @var array
+	 */
+	private $errors;
+
+	/**
+	 * Class variable to store the error messages.
+	 *
+	 * @access private
+	 *
+	 * @var array
+	 */
+	private $error_messages = array();
+
+	/**
+	 * Class variable to store the affected row id.
+	 *
+	 * @var int integer
+	 * @access private
+	 */
+	private $last_insert_id;
+
+	/**
+	 * Class variable to store the number of rows affected.
+	 *
+	 * @var int integer
+	 */
+	private $affected_rows;
+
+	/**
+	 * Variable to emulate MySQL affected row.
+	 *
+	 * @var integer
+	 */
+	private $num_rows;
+
+	/**
+	 * Return value from query().
+	 *
+	 * Each query has its own return value.
+	 *
+	 * @var mixed
+	 */
+	private $return_value;
+
+	/**
+	 * Variable to keep track of nested transactions level.
+	 *
+	 * @var int
+	 */
+	private $transaction_level = 0;
+
+	/**
+	 * Value returned by the last exec().
+	 *
+	 * @var mixed
+	 */
+	private $last_exec_returned;
+
+	/**
+	 * The PDO fetch mode passed to query().
+	 *
+	 * @var mixed
+	 */
+	private $pdo_fetch_mode;
+
+	/**
+	 * Associative array with list of system (non-WordPress) tables.
+	 *
+	 * @var array  [tablename => tablename]
+	 */
+	private $sqlite_system_tables = array();
+
+	/**
+	 * The last error message from SQLite.
+	 *
+	 * @var string
+	 */
+	private $last_sqlite_error;
+
+	/**
+	 * Constructor.
+	 *
+	 * Create PDO object, set user defined functions and initialize other settings.
+	 * Don't use parent::__construct() because this class does not only returns
+	 * PDO instance but many others jobs.
+	 *
+	 * @param PDO $pdo The PDO object.
+	 */
+	public function __construct( $pdo = null ) {
+		if ( ! $pdo ) {
+			if ( ! is_file( FQDB ) ) {
+				$this->prepare_directory();
+			}
+
+			$locked      = false;
+			$status      = 0;
+			$err_message = '';
+			do {
+				try {
+					$options = array(
+						PDO::ATTR_ERRMODE           => PDO::ERRMODE_EXCEPTION,
+						PDO::ATTR_STRINGIFY_FETCHES => true,
+						PDO::ATTR_TIMEOUT           => 5,
+					);
+
+					$dsn = 'sqlite:' . FQDB;
+					$pdo = new PDO( $dsn, null, null, $options ); // phpcs:ignore WordPress.DB.RestrictedClasses
+				} catch ( PDOException $ex ) {
+					$status = $ex->getCode();
+					if ( self::SQLITE_BUSY === $status || self::SQLITE_LOCKED === $status ) {
+						$locked = true;
+					} else {
+						$err_message = $ex->getMessage();
+					}
+				}
+			} while ( $locked );
+
+			if ( $status > 0 ) {
+				$message                = sprintf(
+					'<p>%s</p><p>%s</p><p>%s</p>',
+					'Database initialization error!',
+					"Code: $status",
+					"Error Message: $err_message"
+				);
+				$this->is_error         = true;
+				$this->error_messages[] = $message;
+				return;
+			}
 		}
 
-		$sqlite_query = WP_SQLite_Query_Builder::stringify( $expr );
+		new WP_SQLite_PDO_User_Defined_Functions( $pdo );
 
-		// Returning the query just for now for testing. In the end, we'll
-		// run it and return the SQLite interaction result.
-		//return $sqlite_query;
+		// MySQL data comes across stringified by default.
+		$pdo->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
+		$pdo->query( self::CREATE_DATA_TYPES_CACHE_TABLE );
 
-		if ( ! $sqlite_query ) {
-			return false;
+		/*
+		 * A list of system tables lets us emulate information_schema
+		 * queries without returning extra tables.
+		 */
+		$this->sqlite_system_tables ['sqlite_sequence']              = 'sqlite_sequence';
+		$this->sqlite_system_tables [ self::DATA_TYPES_CACHE_TABLE ] = self::DATA_TYPES_CACHE_TABLE;
+
+		$this->pdo = $pdo;
+
+		// Load MySQL grammar.
+		if ( null === self::$grammar ) {
+			self::$grammar = new WP_Parser_Grammar( require self::GRAMMAR_PATH );
 		}
 
-		$is_select     = (bool) $ast->get_descendant( 'selectStatement' );
-		$statement     = $this->pdo->prepare( $sqlite_query );
-		$return_value  = $statement->execute();
-		$this->results = $return_value;
-		if ( $is_select ) {
-			$this->results = $statement->fetchAll( PDO::FETCH_OBJ );
+		// Fixes a warning in the site-health screen.
+		$this->client_info = SQLite3::version()['versionString'];
+
+		register_shutdown_function( array( $this, '__destruct' ) );
+
+		// WordPress happens to use no foreign keys.
+		$statement = $this->pdo->query( 'PRAGMA foreign_keys' );
+		// phpcs:ignore Universal.Operators.StrictComparisons.LooseEqual
+		if ( $statement->fetchColumn( 0 ) == '0' ) {
+			$this->pdo->query( 'PRAGMA foreign_keys = ON' );
 		}
-		return $return_value;
+		$this->pdo->query( 'PRAGMA encoding="UTF-8";' );
+
+		$valid_journal_modes = array( 'DELETE', 'TRUNCATE', 'PERSIST', 'MEMORY', 'WAL', 'OFF' );
+		if ( defined( 'SQLITE_JOURNAL_MODE' ) && in_array( SQLITE_JOURNAL_MODE, $valid_journal_modes, true ) ) {
+			$this->pdo->query( 'PRAGMA journal_mode = ' . SQLITE_JOURNAL_MODE );
+		}
 	}
 
-	public function get_error_message() {
+	/**
+	 * Destructor
+	 *
+	 * If SQLITE_MEM_DEBUG constant is defined, append information about
+	 * memory usage into database/mem_debug.txt.
+	 *
+	 * This definition is changed since version 1.7.
+	 */
+	public function __destruct() {
+		if ( defined( 'SQLITE_MEM_DEBUG' ) && SQLITE_MEM_DEBUG ) {
+			$max = ini_get( 'memory_limit' );
+			if ( is_null( $max ) ) {
+				$message = sprintf(
+					'[%s] Memory_limit is not set in php.ini file.',
+					gmdate( 'Y-m-d H:i:s', $_SERVER['REQUEST_TIME'] )
+				);
+				error_log( $message );
+				return;
+			}
+			if ( stripos( $max, 'M' ) !== false ) {
+				$max = (int) $max * MB_IN_BYTES;
+			}
+			$peak = memory_get_peak_usage( true );
+			$used = round( (int) $peak / (int) $max * 100, 2 );
+			if ( $used > 90 ) {
+				$message = sprintf(
+					"[%s] Memory peak usage warning: %s %% used. (max: %sM, now: %sM)\n",
+					gmdate( 'Y-m-d H:i:s', $_SERVER['REQUEST_TIME'] ),
+					$used,
+					$max,
+					$peak
+				);
+				error_log( $message );
+			}
+		}
 	}
 
+	/**
+	 * Get the PDO object.
+	 *
+	 * @return PDO
+	 */
+	public function get_pdo() {
+		return $this->pdo;
+	}
+
+	/**
+	 * Method to return inserted row id.
+	 */
+	public function get_insert_id() {
+		return $this->last_insert_id;
+	}
+
+	/**
+	 * Method to return the number of rows affected.
+	 */
+	public function get_affected_rows() {
+		return $this->affected_rows;
+	}
+
+	/**
+	 * Method to execute query().
+	 *
+	 * Divide the query types into seven different ones. That is to say:
+	 *
+	 * 1. SELECT SQL_CALC_FOUND_ROWS
+	 * 2. INSERT
+	 * 3. CREATE TABLE(INDEX)
+	 * 4. ALTER TABLE
+	 * 5. SHOW VARIABLES
+	 * 6. DROP INDEX
+	 * 7. THE OTHERS
+	 *
+	 * #1 is just a tricky play. See the private function handle_sql_count() in query.class.php.
+	 * From #2 through #5 call different functions respectively.
+	 * #6 call the ALTER TABLE query.
+	 * #7 is a normal process: sequentially call prepare_query() and execute_query().
+	 *
+	 * #1 process has been changed since version 1.5.1.
+	 *
+	 * @param string $statement          Full SQL statement string.
+	 * @param int    $mode               Not used.
+	 * @param array  ...$fetch_mode_args Not used.
+	 *
+	 * @see PDO::query()
+	 *
+	 * @throws Exception    If the query could not run.
+	 * @throws PDOException If the translated query could not run.
+	 *
+	 * @return mixed according to the query type
+	 */
+	public function query( $statement, $mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) { // phpcs:ignore WordPress.DB.RestrictedClasses
+		$this->flush();
+		if ( function_exists( 'apply_filters' ) ) {
+			/**
+			 * Filters queries before they are translated and run.
+			 *
+			 * Return a non-null value to cause query() to return early with that result.
+			 * Use this filter to intercept queries that don't work correctly in SQLite.
+			 *
+			 * From within the filter you can do
+			 *  function filter_sql ($result, $translator, $statement, $mode, $fetch_mode_args) {
+			 *     if ( intercepting this query  ) {
+			 *       return $translator->execute_sqlite_query( $statement );
+			 *     }
+			 *     return $result;
+			 *   }
+			 *
+			 * @param null|array $result Default null to continue with the query.
+			 * @param object     $translator The translator object. You can call $translator->execute_sqlite_query().
+			 * @param string     $statement The statement passed.
+			 * @param int        $mode Fetch mode: PDO::FETCH_OBJ, PDO::FETCH_CLASS, etc.
+			 * @param array      $fetch_mode_args Variable arguments passed to query.
+			 *
+			 * @returns null|array Null to proceed, or an array containing a resultset.
+			 * @since 2.1.0
+			 */
+			$pre = apply_filters( 'pre_query_sqlite_db', null, $this, $statement, $mode, $fetch_mode_args );
+			if ( null !== $pre ) {
+				return $pre;
+			}
+		}
+		$this->pdo_fetch_mode = $mode;
+		$this->mysql_query    = $statement;
+		if (
+			preg_match( '/^\s*START TRANSACTION/i', $statement )
+			|| preg_match( '/^\s*BEGIN/i', $statement )
+		) {
+			return $this->begin_transaction();
+		}
+		if ( preg_match( '/^\s*COMMIT/i', $statement ) ) {
+			return $this->commit();
+		}
+		if ( preg_match( '/^\s*ROLLBACK/i', $statement ) ) {
+			return $this->rollback();
+		}
+
+		try {
+			// Parse the MySQL query.
+			$lexer  = new WP_MySQL_Lexer( $statement );
+			$tokens = $lexer->remaining_tokens();
+
+			$parser = new WP_MySQL_Parser( self::$grammar, $tokens );
+			$ast    = $parser->parse();
+
+			if ( null === $ast ) {
+				throw new Exception( 'Failed to parse the MySQL query.' );
+			}
+
+			// Perform all the queries in a nested transaction.
+			$this->begin_transaction();
+
+			do {
+				$error = null;
+				try {
+					$this->execute_mysql_query( $ast );
+				} catch ( PDOException $error ) {
+					if ( $error->getCode() !== self::SQLITE_BUSY ) {
+						throw $error;
+					}
+				}
+			} while ( $error );
+
+			if ( function_exists( 'do_action' ) ) {
+				/**
+				 * Notifies that a query has been translated and executed.
+				 *
+				 * @param string $query The executed SQL query.
+				 * @param string $query_type The type of the SQL query (e.g. SELECT, INSERT, UPDATE, DELETE).
+				 * @param string $table_name The name of the table affected by the SQL query.
+				 * @param array $insert_columns The columns affected by the INSERT query (if applicable).
+				 * @param int $last_insert_id The ID of the last inserted row (if applicable).
+				 * @param int $affected_rows The number of affected rows (if applicable).
+				 *
+				 * @since 0.1.0
+				 */
+				do_action(
+					'sqlite_translated_query_executed',
+					$this->mysql_query,
+					$this->query_type,
+					$this->table_name,
+					$this->insert_columns,
+					$this->last_insert_id,
+					$this->affected_rows
+				);
+			}
+
+			// Commit the nested transaction.
+			$this->commit();
+
+			return $this->return_value;
+		} catch ( Exception $err ) {
+			// Rollback the nested transaction.
+			$this->rollback();
+			if ( defined( 'PDO_DEBUG' ) && PDO_DEBUG === true ) {
+				throw $err;
+			}
+			return $this->handle_error( $err );
+		}
+	}
+
+	/**
+	 * Method to return the queried result data.
+	 *
+	 * @return mixed
+	 */
 	public function get_query_results() {
 		return $this->results;
 	}
 
-	private function rewrite_sql_calc_found_rows( WP_SQLite_Expression $expr ) {
-		if ( $this->has_found_rows_call && ! $this->has_sql_calc_found_rows && null === $this->last_calc_rows_result ) {
-			throw new Exception( 'FOUND_ROWS() called without SQL_CALC_FOUND_ROWS' );
+	/**
+	 * Method to return the number of rows from the queried result.
+	 */
+	public function get_num_rows() {
+		return $this->num_rows;
+	}
+
+	/**
+	 * Method to return the queried results according to the query types.
+	 *
+	 * @return mixed
+	 */
+	public function get_return_value() {
+		return $this->return_value;
+	}
+
+	/**
+	 * Executes a MySQL query in SQLite.
+	 *
+	 * @param string $query The query.
+	 *
+	 * @throws Exception If the query is not supported.
+	 */
+	private function execute_mysql_query( $query ) {
+		//@TODO: Implement the query translation.
+	}
+
+	/**
+	 * Executes a query in SQLite.
+	 *
+	 * @param mixed $sql The query to execute.
+	 * @param mixed $params The parameters to bind to the query.
+	 * @throws PDOException If the query could not be executed.
+	 * @return object {
+	 *     The result of the query.
+	 *
+	 *     @type PDOStatement $stmt The executed statement
+	 *     @type * $result The value returned by $stmt.
+	 * }
+	 */
+	public function execute_sqlite_query( $sql, $params = array() ) {
+		$this->executed_sqlite_queries[] = array(
+			'sql'    => $sql,
+			'params' => $params,
+		);
+
+		$stmt = $this->pdo->prepare( $sql );
+		if ( false === $stmt || null === $stmt ) {
+			$this->last_exec_returned = null;
+			$info                     = $this->pdo->errorInfo();
+			$this->last_sqlite_error  = $info[0] . ' ' . $info[2];
+			throw new PDOException( implode( ' ', array( 'Error:', $info[0], $info[2], 'SQLite:', $sql ) ), $info[1] );
+		}
+		$returned                 = $stmt->execute( $params );
+		$this->last_exec_returned = $returned;
+		if ( ! $returned ) {
+			$info                    = $stmt->errorInfo();
+			$this->last_sqlite_error = $info[0] . ' ' . $info[2];
+			throw new PDOException( implode( ' ', array( 'Error:', $info[0], $info[2], 'SQLite:', $sql ) ), $info[1] );
 		}
 
-		if ( $this->has_sql_calc_found_rows ) {
-			$expr_to_run = $expr;
-			if ( $this->has_found_rows_call ) {
-				$expr_without_found_rows = new WP_SQLite_Expression( array() );
-				foreach ( $expr->elements as $k => $element ) {
-					if ( WP_SQLite_Token::TYPE_IDENTIFIER === $element->type && 'FOUND_ROWS' === $element->value ) {
-						$expr_without_found_rows->add_token(
-							WP_SQLite_Token_Factory::value( 0 )
-						);
-					} else {
-						$expr_without_found_rows->add_token( $element );
-					}
-				}
-				$expr_to_run = $expr_without_found_rows;
-			}
+		return $stmt;
+	}
 
-			// ...remove the LIMIT clause...
-			$query = 'SELECT COUNT(*) as cnt FROM (' . WP_SQLite_Query_Builder::stringify( $expr_to_run ) . ');';
-
-			// ...run $query...
-			// $result = ...
-			// $this->last_calc_rows_result = $result['cnt'];
+	/**
+	 * Method to return error messages.
+	 *
+	 * @throws Exception If error is found.
+	 *
+	 * @return string
+	 */
+	public function get_error_message() {
+		if ( count( $this->error_messages ) === 0 ) {
+			$this->is_error       = false;
+			$this->error_messages = array();
+			return '';
 		}
 
-		if ( ! $this->has_found_rows_call ) {
-			return $expr;
+		if ( false === $this->is_error ) {
+			return '';
 		}
 
-		$expr_with_found_rows_result = new WP_SQLite_Expression( array() );
-		foreach ( $expr->elements as $k => $element ) {
-			if ( WP_SQLite_Token::TYPE_IDENTIFIER === $element->type && 'FOUND_ROWS' === $element->value ) {
-				$expr_with_found_rows_result->add_token(
-					WP_SQLite_Token_Factory::value( $this->last_calc_rows_result )
-				);
+		$output  = '<div style="clear:both">&nbsp;</div>' . PHP_EOL;
+		$output .= '<div class="queries" style="clear:both;margin-bottom:2px;border:red dotted thin;">' . PHP_EOL;
+		$output .= '<p>MySQL query:</p>' . PHP_EOL;
+		$output .= '<p>' . $this->mysql_query . '</p>' . PHP_EOL;
+		$output .= '<p>Queries made or created this session were:</p>' . PHP_EOL;
+		$output .= '<ol>' . PHP_EOL;
+		foreach ( $this->executed_sqlite_queries as $q ) {
+			$message = "Executing: {$q['sql']} | " . ( $q['params'] ? 'parameters: ' . implode( ', ', $q['params'] ) : '(no parameters)' );
+
+			$output .= '<li>' . htmlspecialchars( $message ) . '</li>' . PHP_EOL;
+		}
+		$output .= '</ol>' . PHP_EOL;
+		$output .= '</div>' . PHP_EOL;
+		foreach ( $this->error_messages as $num => $m ) {
+			$output .= '<div style="clear:both;margin-bottom:2px;border:red dotted thin;" class="error_message" style="border-bottom:dotted blue thin;">' . PHP_EOL;
+			$output .= sprintf(
+				'Error occurred at line %1$d in Function %2$s. Error message was: %3$s.',
+				(int) $this->errors[ $num ]['line'],
+				'<code>' . htmlspecialchars( $this->errors[ $num ]['function'] ) . '</code>',
+				$m
+			) . PHP_EOL;
+			$output .= '</div>' . PHP_EOL;
+		}
+
+		try {
+			throw new Exception();
+		} catch ( Exception $e ) {
+			$output .= '<p>Backtrace:</p>' . PHP_EOL;
+			$output .= '<pre>' . $e->getTraceAsString() . '</pre>' . PHP_EOL;
+		}
+
+		return $output;
+	}
+
+	/**
+	 * Begin a new transaction or nested transaction.
+	 *
+	 * @return boolean
+	 */
+	public function begin_transaction() {
+		$success = false;
+		try {
+			if ( 0 === $this->transaction_level ) {
+				$this->execute_sqlite_query( 'BEGIN' );
 			} else {
-				$expr_with_found_rows_result->add_token( $element );
+				$this->execute_sqlite_query( 'SAVEPOINT LEVEL' . $this->transaction_level );
+			}
+			$success = $this->last_exec_returned;
+		} finally {
+			if ( $success ) {
+				++$this->transaction_level;
+				if ( function_exists( 'do_action' ) ) {
+					/**
+					 * Notifies that a transaction-related query has been translated and executed.
+					 *
+					 * @param string $command The SQL statement (one of "START TRANSACTION", "COMMIT", "ROLLBACK").
+					 * @param bool $success Whether the SQL statement was successful or not.
+					 * @param int $nesting_level The nesting level of the transaction.
+					 *
+					 * @since 0.1.0
+					 */
+					do_action( 'sqlite_transaction_query_executed', 'START TRANSACTION', (bool) $this->last_exec_returned, $this->transaction_level - 1 );
+				}
 			}
 		}
-		return $expr_with_found_rows_result;
+		return $success;
 	}
 
-	private function translate_query( $ast ) {
-		if ( null === $ast ) {
-			return null;
+	/**
+	 * Commit the current transaction or nested transaction.
+	 *
+	 * @return boolean True on success, false on failure.
+	 */
+	public function commit() {
+		if ( 0 === $this->transaction_level ) {
+			return false;
 		}
 
-		if ( $ast instanceof WP_MySQL_Token ) {
-			$token = $ast;
-			switch ( $token->type ) {
-				case WP_MySQL_Lexer::EOF:
-					return new WP_SQLite_Expression( array() );
+		--$this->transaction_level;
+		if ( 0 === $this->transaction_level ) {
+			$this->execute_sqlite_query( 'COMMIT' );
+		} else {
+			$this->execute_sqlite_query( 'RELEASE SAVEPOINT LEVEL' . $this->transaction_level );
+		}
 
-				case WP_MySQL_Lexer::IDENTIFIER:
-					return new WP_SQLite_Expression(
-						array(
-							WP_SQLite_Token_Factory::identifier(
-								trim( $token->text, '`"' )
-							),
-						)
-					);
+		if ( function_exists( 'do_action' ) ) {
+			do_action( 'sqlite_transaction_query_executed', 'COMMIT', (bool) $this->last_exec_returned, $this->transaction_level );
+		}
+		return $this->last_exec_returned;
+	}
 
-				default:
-					return new WP_SQLite_Expression(
-						array(
-							WP_SQLite_Token_Factory::raw( $token->text ),
-						)
-					);
+	/**
+	 * Rollback the current transaction or nested transaction.
+	 *
+	 * @return boolean True on success, false on failure.
+	 */
+	public function rollback() {
+		if ( 0 === $this->transaction_level ) {
+			return false;
+		}
+
+		--$this->transaction_level;
+		if ( 0 === $this->transaction_level ) {
+			$this->execute_sqlite_query( 'ROLLBACK' );
+		} else {
+			$this->execute_sqlite_query( 'ROLLBACK TO SAVEPOINT LEVEL' . $this->transaction_level );
+		}
+		if ( function_exists( 'do_action' ) ) {
+			do_action( 'sqlite_transaction_query_executed', 'ROLLBACK', (bool) $this->last_exec_returned, $this->transaction_level );
+		}
+		return $this->last_exec_returned;
+	}
+
+	/**
+	 * This method makes database directory and .htaccess file.
+	 *
+	 * It is executed only once when the installation begins.
+	 */
+	private function prepare_directory() {
+		global $wpdb;
+		$u = umask( 0000 );
+		if ( ! is_dir( FQDBDIR ) ) {
+			if ( ! @mkdir( FQDBDIR, 0704, true ) ) {
+				umask( $u );
+				wp_die( 'Unable to create the required directory! Please check your server settings.', 'Error!' );
 			}
 		}
-
-		if ( ! ( $ast instanceof WP_Parser_Node ) ) {
-			throw new Exception( 'translate_query only accepts WP_MySQL_Token and WP_Parser_Node instances' );
+		if ( ! is_writable( FQDBDIR ) ) {
+			umask( $u );
+			$message = 'Unable to create a file in the directory! Please check your server settings.';
+			wp_die( $message, 'Error!' );
 		}
+		if ( ! is_file( FQDBDIR . '.htaccess' ) ) {
+			$fh = fopen( FQDBDIR . '.htaccess', 'w' );
+			if ( ! $fh ) {
+				umask( $u );
+				echo 'Unable to create a file in the directory! Please check your server settings.';
 
-		$rule_name = $ast->rule_name;
-
-		switch ( $rule_name ) {
-			case 'indexHintList':
-				// SQLite doesn't support index hints. Let's skip them.
-				return null;
-
-			case 'querySpecOption':
-				$token = $ast->get_token();
-				switch ( $token->type ) {
-					case WP_MySQL_Lexer::ALL_SYMBOL:
-					case WP_MySQL_Lexer::DISTINCT_SYMBOL:
-						return new WP_SQLite_Expression(
-							array(
-								WP_SQLite_Token_Factory::raw( $token->text ),
-							)
-						);
-					case WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL:
-						$this->has_sql_calc_found_rows = true;
-						// Fall through to default.
-					default:
-						// we'll need to run the current SQL query without any
-						// LIMIT clause, and then substitute the FOUND_ROWS()
-						// function with a literal number of rows found.
-						return new WP_SQLite_Expression( array() );
-				}
-				// Otherwise, fall through.
-
-			case 'fromClause':
-				// Skip `FROM DUAL`. We only care about a singular
-				// FROM DUAL statement, as FROM mytable, DUAL is a syntax
-				// error.
-				if (
-					$ast->has_token( WP_MySQL_Lexer::DUAL_SYMBOL ) &&
-					! $ast->has_child( 'tableReferenceList' )
-				) {
-					return null;
-				}
-				// Otherwise, fall through.
-
-			case 'selectOption':
-			case 'interval':
-			case 'intervalTimeStamp':
-			case 'bitExpr':
-			case 'boolPri':
-			case 'lockStrengh':
-			case 'orderList':
-			case 'simpleExpr':
-			case 'columnRef':
-			case 'exprIs':
-			case 'exprAnd':
-			case 'primaryExprCompare':
-			case 'fieldIdentifier':
-			case 'dotIdentifier':
-			case 'identifier':
-			case 'literal':
-			case 'joinedTable':
-			case 'nullLiteral':
-			case 'boolLiteral':
-			case 'numLiteral':
-			case 'textLiteral':
-			case 'predicate':
-			case 'predicateExprBetween':
-			case 'primaryExprPredicate':
-			case 'pureIdentifier':
-			case 'unambiguousIdentifier':
-			case 'qualifiedIdentifier':
-			case 'query':
-			case 'queryExpression':
-			case 'queryExpressionBody':
-			case 'queryExpressionParens':
-			case 'queryPrimary':
-			case 'querySpecification':
-			case 'queryTerm':
-			case 'selectAlias':
-			case 'selectItem':
-			case 'selectItemList':
-			case 'selectStatement':
-			case 'simpleExprColumnRef':
-			case 'simpleExprFunction':
-			case 'outerJoinType':
-			case 'simpleExprSubQuery':
-			case 'simpleExprLiteral':
-			case 'compOp':
-			case 'simpleExprList':
-			case 'simpleStatement':
-			case 'subquery':
-			case 'exprList':
-			case 'expr':
-			case 'tableReferenceList':
-			case 'tableReference':
-			case 'tableRef':
-			case 'tableAlias':
-			case 'tableFactor':
-			case 'singleTable':
-			case 'udfExprList':
-			case 'udfExpr':
-			case 'withClause':
-			case 'whereClause':
-			case 'commonTableExpression':
-			case 'derivedTable':
-			case 'columnRefOrLiteral':
-			case 'orderClause':
-			case 'groupByClause':
-			case 'lockingClauseList':
-			case 'lockingClause':
-			case 'havingClause':
-			case 'direction':
-			case 'orderExpression':
-				$child_expressions = array();
-				foreach ( $ast->children as $child ) {
-					$child_expressions[] = $this->translate_query( $child );
-				}
-				return new WP_SQLite_Expression( $child_expressions );
-
-			case 'textStringLiteral':
-				return new WP_SQLite_Expression(
-					array(
-						$ast->has_token( WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT ) ?
-							WP_SQLite_Token_Factory::double_quoted_value( $ast->get_token( WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT )->text ) : false,
-						$ast->has_token( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT ) ?
-							WP_SQLite_Token_Factory::raw( $ast->get_token( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT )->text ) : false,
-					)
-				);
-
-			case 'functionCall':
-				return $this->translate_function_call( $ast );
-
-			case 'runtimeFunctionCall':
-				return $this->translate_runtime_function_call( $ast );
-
-			default:
-				return null;
-				// var_dump(count($ast->children));
-				// foreach($ast->children as $child) {
-				//     var_dump(get_class($child));
-				//     echo $child->getText();
-				//     echo "\n\n";
-				// }
-				return new WP_SQLite_Expression(
-					array(
-						WP_SQLite_Token_Factory::raw(
-							$rule_name
-						),
-					)
-				);
+				return false;
+			}
+			fwrite( $fh, 'DENY FROM ALL' );
+			fclose( $fh );
 		}
+		if ( ! is_file( FQDBDIR . 'index.php' ) ) {
+			$fh = fopen( FQDBDIR . 'index.php', 'w' );
+			if ( ! $fh ) {
+				umask( $u );
+				echo 'Unable to create a file in the directory! Please check your server settings.';
+
+				return false;
+			}
+			fwrite( $fh, '<?php // Silence is gold. ?>' );
+			fclose( $fh );
+		}
+		umask( $u );
+
+		return true;
 	}
 
-	private function translate_runtime_function_call( $ast ): WP_SQLite_Expression {
-		$name_token = $ast->children[0];
-
-		switch ( strtoupper( $name_token->text ) ) {
-			case 'ADDDATE':
-			case 'DATE_ADD':
-				$args     = $ast->get_children( 'expr' );
-				$interval = $ast->get_child( 'interval' );
-				$timespan = $interval->get_child( 'intervalTimeStamp' )->get_token()->text;
-				return WP_SQLite_Token_Factory::create_function(
-					'DATETIME',
-					array(
-						$this->translate_query( $args[0] ),
-						new WP_SQLite_Expression(
-							array(
-								WP_SQLite_Token_Factory::value( '+' ),
-								WP_SQLite_Token_Factory::raw( '||' ),
-								$this->translate_query( $args[1] ),
-								WP_SQLite_Token_Factory::raw( '||' ),
-								WP_SQLite_Token_Factory::value( $timespan ),
-							)
-						),
-					)
-				);
-
-			case 'DATE_SUB':
-				// return new WP_SQLite_Expression([
-				//     SQLiteTokenFactory::raw("DATETIME("),
-				//     $args[0],
-				//     SQLiteTokenFactory::raw(", '-'"),
-				//     $args[1],
-				//     SQLiteTokenFactory::raw(" days')")
-				// ]);
-
-			case 'VALUES':
-				$column = $ast->get_child()->get_descendant( 'pureIdentifier' );
-				if ( ! $column ) {
-					throw new Exception( 'VALUES() calls without explicit column names are unsupported' );
-				}
-
-				$colname = $column->get_token()->extract_value();
-				return new WP_SQLite_Expression(
-					array(
-						WP_SQLite_Token_Factory::raw( 'excluded.' ),
-						WP_SQLite_Token_Factory::identifier( $colname ),
-					)
-				);
-			default:
-				throw new Exception( 'Unsupported function: ' . $name_token->text );
-		}
+	/**
+	 * Method to clear previous data.
+	 */
+	private function flush() {
+		$this->mysql_query             = '';
+		$this->results                 = null;
+		$this->last_exec_returned      = null;
+		$this->table_name              = null;
+		$this->last_insert_id          = null;
+		$this->affected_rows           = null;
+		$this->insert_columns          = array();
+		$this->num_rows                = null;
+		$this->return_value            = null;
+		$this->error_messages          = array();
+		$this->is_error                = false;
+		$this->executed_sqlite_queries = array();
 	}
 
-	private function translate_function_call( $function_call_tree ): WP_SQLite_Expression {
-		$name = $function_call_tree->get_child( 'pureIdentifier' )->get_token()->text;
-		$args = array();
-		foreach ( $function_call_tree->get_child( 'udfExprList' )->get_children() as $node ) {
-			$args[] = $this->translate_query( $node );
-		}
-		switch ( strtoupper( $name ) ) {
-			case 'ABS':
-			case 'ACOS':
-			case 'ASIN':
-			case 'ATAN':
-			case 'ATAN2':
-			case 'COS':
-			case 'DEGREES':
-			case 'TRIM':
-			case 'EXP':
-			case 'MAX':
-			case 'MIN':
-			case 'FLOOR':
-			case 'RADIANS':
-			case 'ROUND':
-			case 'SIN':
-			case 'SQRT':
-			case 'TAN':
-			case 'TRUNCATE':
-			case 'RANDOM':
-			case 'PI':
-			case 'LTRIM':
-			case 'RTRIM':
-				return WP_SQLite_Token_Factory::create_function( $name, $args );
+	/**
+	 * Error handler.
+	 *
+	 * @param Exception $err Exception object.
+	 *
+	 * @return bool Always false.
+	 */
+	private function handle_error( Exception $err ) {
+		$message = $err->getMessage();
+		$this->set_error( __LINE__, __FUNCTION__, $message );
+		$this->return_value = false;
+		return false;
+	}
 
-			case 'CEIL':
-			case 'CEILING':
-				return WP_SQLite_Token_Factory::create_function( 'CEIL', $args );
-
-			case 'COT':
-				return new WP_SQLite_Expression(
-					array(
-						WP_SQLite_Token_Factory::raw( '1 / ' ),
-						WP_SQLite_Token_Factory::create_function( 'TAN', $args ),
-					)
-				);
-
-			case 'LN':
-			case 'LOG':
-			case 'LOG2':
-				return WP_SQLite_Token_Factory::create_function( 'LOG', $args );
-
-			case 'LOG10':
-				return WP_SQLite_Token_Factory::create_function( 'LOG10', $args );
-
-			// case 'MOD':
-			//     return $this->transformBinaryOperation([
-			//         'operator' => '%',
-			//         'left' => $args[0],
-			//         'right' => $args[1]
-			//     ]);
-
-			case 'POW':
-			case 'POWER':
-				return WP_SQLite_Token_Factory::create_function( 'POW', $args );
-
-			// String functions
-			case 'ASCII':
-				return WP_SQLite_Token_Factory::create_function( 'UNICODE', $args );
-			case 'CHAR_LENGTH':
-			case 'LENGTH':
-				return WP_SQLite_Token_Factory::create_function( 'LENGTH', $args );
-			case 'CONCAT':
-				$concated = array( WP_SQLite_Token_Factory::raw( '(' ) );
-				foreach ( $args as $k => $arg ) {
-					$concated[] = $arg;
-					if ( $k < count( $args ) - 1 ) {
-						$concated[] = WP_SQLite_Token_Factory::raw( '||' );
-					}
-				}
-				$concated[] = WP_SQLite_Token_Factory::raw( ')' );
-				return new WP_SQLite_Expression( $concated );
-			// case 'CONCAT_WS':
-			//     return new WP_SQLite_Expression([
-			//         SQLiteTokenFactory::raw("REPLACE("),
-			//         implode(" || ", array_slice($args, 1)),
-			//         SQLiteTokenFactory::raw(", '', "),
-			//         $args[0],
-			//         SQLiteTokenFactory::raw(")")
-			//     ]);
-			case 'INSTR':
-				return WP_SQLite_Token_Factory::create_function( 'INSTR', $args );
-			case 'LCASE':
-			case 'LOWER':
-				return WP_SQLite_Token_Factory::create_function( 'LOWER', $args );
-			case 'LEFT':
-				return WP_SQLite_Token_Factory::create_function(
-					'SUBSTR',
-					array(
-						$args[0],
-						'1',
-						$args[1],
-					)
-				);
-			case 'LOCATE':
-				return WP_SQLite_Token_Factory::create_function(
-					'INSTR',
-					array(
-						$args[1],
-						$args[0],
-					)
-				);
-			case 'REPEAT':
-				return new WP_SQLite_Expression(
-					array(
-						WP_SQLite_Token_Factory::raw( "REPLACE(CHAR(32), ' ', " ),
-						$args[0],
-						WP_SQLite_Token_Factory::raw( ')' ),
-					)
-				);
-
-			case 'REPLACE':
-				return new WP_SQLite_Expression(
-					array(
-						WP_SQLite_Token_Factory::raw( 'REPLACE(' ),
-						implode( ', ', $args ),
-						WP_SQLite_Token_Factory::raw( ')' ),
-					)
-				);
-			case 'RIGHT':
-				return new WP_SQLite_Expression(
-					array(
-						WP_SQLite_Token_Factory::raw( 'SUBSTR(' ),
-						$args[0],
-						WP_SQLite_Token_Factory::raw( ', -(' ),
-						$args[1],
-						WP_SQLite_Token_Factory::raw( '))' ),
-					)
-				);
-			case 'SPACE':
-				return new WP_SQLite_Expression(
-					array(
-						WP_SQLite_Token_Factory::raw( "REPLACE(CHAR(32), ' ', '')" ),
-					)
-				);
-			case 'SUBSTRING':
-			case 'SUBSTR':
-				return WP_SQLite_Token_Factory::create_function( 'SUBSTR', $args );
-			case 'UCASE':
-			case 'UPPER':
-				return WP_SQLite_Token_Factory::create_function( 'UPPER', $args );
-
-			case 'DATE_FORMAT':
-				$mysql_date_format_to_sqlite_strftime = array(
-					'%a' => '%D',
-					'%b' => '%M',
-					'%c' => '%n',
-					'%D' => '%jS',
-					'%d' => '%d',
-					'%e' => '%j',
-					'%H' => '%H',
-					'%h' => '%h',
-					'%I' => '%h',
-					'%i' => '%M',
-					'%j' => '%z',
-					'%k' => '%G',
-					'%l' => '%g',
-					'%M' => '%F',
-					'%m' => '%m',
-					'%p' => '%A',
-					'%r' => '%h:%i:%s %A',
-					'%S' => '%s',
-					'%s' => '%s',
-					'%T' => '%H:%i:%s',
-					'%U' => '%W',
-					'%u' => '%W',
-					'%V' => '%W',
-					'%v' => '%W',
-					'%W' => '%l',
-					'%w' => '%w',
-					'%X' => '%Y',
-					'%x' => '%o',
-					'%Y' => '%Y',
-					'%y' => '%y',
-				);
-				// @TODO: Implement as user defined function to avoid
-				//        rewriting something that may be an expression as a string
-				$format     = $args[1]->elements[0]->value;
-				$new_format = strtr( $format, $mysql_date_format_to_sqlite_strftime );
-
-				return WP_SQLite_Token_Factory::create_function(
-					'STRFTIME',
-					array(
-						new WP_SQLite_Expression( array( WP_SQLite_Token_Factory::raw( $new_format ) ) ),
-						new WP_SQLite_Expression( array( $args[0] ) ),
-					)
-				);
-			case 'DATEDIFF':
-				return new WP_SQLite_Expression(
-					array(
-						WP_SQLite_Token_Factory::create_function( 'JULIANDAY', array( $args[0] ) ),
-						WP_SQLite_Token_Factory::raw( ' - ' ),
-						WP_SQLite_Token_Factory::create_function( 'JULIANDAY', array( $args[1] ) ),
-					)
-				);
-			case 'DAYNAME':
-				return WP_SQLite_Token_Factory::create_function(
-					'STRFTIME',
-					array_merge( array( '%w' ), $args )
-				);
-			case 'DAY':
-			case 'DAYOFMONTH':
-				return new WP_SQLite_Expression(
-					array(
-						WP_SQLite_Token_Factory::raw( "CAST('" ),
-						WP_SQLite_Token_Factory::create_function( 'STRFTIME', array_merge( array( '%d' ), $args ) ),
-						WP_SQLite_Token_Factory::raw( ") AS INTEGER'" ),
-					)
-				);
-			case 'DAYOFWEEK':
-				return new WP_SQLite_Expression(
-					array(
-						WP_SQLite_Token_Factory::raw( "CAST('" ),
-						WP_SQLite_Token_Factory::create_function( 'STRFTIME', array_merge( array( '%w' ), $args ) ),
-						WP_SQLite_Token_Factory::raw( ") + 1 AS INTEGER'" ),
-					)
-				);
-			case 'DAYOFYEAR':
-				return new WP_SQLite_Expression(
-					array(
-						WP_SQLite_Token_Factory::raw( "CAST('" ),
-						WP_SQLite_Token_Factory::create_function( 'STRFTIME', array_merge( array( '%j' ), $args ) ),
-						WP_SQLite_Token_Factory::raw( ") AS INTEGER'" ),
-					)
-				);
-			case 'HOUR':
-				return new WP_SQLite_Expression(
-					array(
-						WP_SQLite_Token_Factory::raw( "CAST('" ),
-						WP_SQLite_Token_Factory::create_function( 'STRFTIME', array_merge( array( '%H' ), $args ) ),
-						WP_SQLite_Token_Factory::raw( ") AS INTEGER'" ),
-					)
-				);
-			case 'MINUTE':
-				return new WP_SQLite_Expression(
-					array(
-						WP_SQLite_Token_Factory::raw( "CAST('" ),
-						WP_SQLite_Token_Factory::create_function( 'STRFTIME', array_merge( array( '%M' ), $args ) ),
-						WP_SQLite_Token_Factory::raw( ") AS INTEGER'" ),
-					)
-				);
-			case 'MONTH':
-				return new WP_SQLite_Expression(
-					array(
-						WP_SQLite_Token_Factory::raw( "CAST('" ),
-						WP_SQLite_Token_Factory::create_function( 'STRFTIME', array_merge( array( '%m' ), $args ) ),
-						WP_SQLite_Token_Factory::raw( ") AS INTEGER'" ),
-					)
-				);
-			case 'MONTHNAME':
-				return WP_SQLite_Token_Factory::create_function( 'STRFTIME', array_merge( array( '%m' ), $args ) );
-			case 'NOW':
-				return new WP_SQLite_Expression(
-					array(
-						WP_SQLite_Token_Factory::raw( 'CURRENT_TIMESTAMP()' ),
-					)
-				);
-			case 'SECOND':
-				return new WP_SQLite_Expression(
-					array(
-						WP_SQLite_Token_Factory::raw( "CAST('" ),
-						WP_SQLite_Token_Factory::create_function( 'STRFTIME', array_merge( array( '%S' ), $args ) ),
-						WP_SQLite_Token_Factory::raw( ") AS INTEGER'" ),
-					)
-				);
-			case 'TIMESTAMP':
-				return new WP_SQLite_Expression(
-					array_merge(
-						array( WP_SQLite_Token_Factory::raw( 'DATETIME(' ) ),
-						$args,
-						array( WP_SQLite_Token_Factory::raw( ')' ) )
-					)
-				);
-			case 'YEAR':
-				return new WP_SQLite_Expression(
-					array(
-						WP_SQLite_Token_Factory::raw( "CAST('" ),
-						WP_SQLite_Token_Factory::create_function( 'STRFTIME', array_merge( array( '%Y' ), $args ) ),
-						WP_SQLite_Token_Factory::raw( ") AS INTEGER'" ),
-					)
-				);
-			case 'FOUND_ROWS':
-				$this->has_found_rows_call = true;
-				return new WP_SQLite_Expression(
-					array(
-						// Post-processed in handleSqlCalcFoundRows()
-						WP_SQLite_Token_Factory::raw( 'FOUND_ROWS' ),
-					)
-				);
-			default:
-				throw new Exception( 'Unsupported function: ' . $name );
-		}
+	/**
+	 * Method to format the error messages and put out to the file.
+	 *
+	 * When $wpdb::suppress_errors is set to true or $wpdb::show_errors is set to false,
+	 * the error messages are ignored.
+	 *
+	 * @param string $line          Where the error occurred.
+	 * @param string $function_name Indicate the function name where the error occurred.
+	 * @param string $message       The message.
+	 *
+	 * @return boolean|void
+	 */
+	private function set_error( $line, $function_name, $message ) {
+		$this->errors[]         = array(
+			'line'     => $line,
+			'function' => $function_name,
+		);
+		$this->error_messages[] = $message;
+		$this->is_error         = true;
 	}
 }
