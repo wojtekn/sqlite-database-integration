@@ -10,7 +10,9 @@ use PDOStatement;
 use SQLite3;
 use WP_MySQL_Lexer;
 use WP_MySQL_Parser;
+use WP_MySQL_Token;
 use WP_Parser_Grammar;
+use WP_Parser_Node;
 use WP_SQLite_PDO_User_Defined_Functions;
 
 class WP_SQLite_Driver {
@@ -503,17 +505,6 @@ class WP_SQLite_Driver {
 	}
 
 	/**
-	 * Executes a MySQL query in SQLite.
-	 *
-	 * @param string $query The query.
-	 *
-	 * @throws Exception If the query is not supported.
-	 */
-	private function execute_mysql_query( $query ) {
-		//@TODO: Implement the query translation.
-	}
-
-	/**
 	 * Executes a query in SQLite.
 	 *
 	 * @param mixed $sql The query to execute.
@@ -682,6 +673,93 @@ class WP_SQLite_Driver {
 	}
 
 	/**
+	 * Executes a MySQL query in SQLite.
+	 *
+	 * @param string $query The query.
+	 *
+	 * @throws Exception If the query is not supported.
+	 */
+	private function execute_mysql_query( WP_Parser_Node $ast ) {
+		if ( 'query' !== $ast->rule_name ) {
+			throw new Exception( sprintf( 'Expected "query" node, got: "%s"', $ast->rule_name ) );
+		}
+
+		$children = $ast->get_child_nodes();
+		if ( count( $children ) !== 1 ) {
+			throw new Exception( sprintf( 'Expected 1 child, got: %d', count( $children ) ) );
+		}
+
+		$ast = $children[0]->get_child_node();
+		switch ( $ast->rule_name ) {
+			case 'selectStatement':
+				$this->query_type = 'SELECT';
+				$query            = $this->translate( $ast->get_child() );
+				$stmt             = $this->execute_sqlite_query( $query );
+				$this->set_results_from_fetched_data(
+					$stmt->fetchAll( $this->pdo_fetch_mode )
+				);
+				break;
+			default:
+				throw new Exception( sprintf( 'Unsupported statement type: "%s"', $ast->rule_name ) );
+		}
+	}
+
+	private function translate( $ast ) {
+		if ( null === $ast ) {
+			return null;
+		}
+
+		if ( $ast instanceof WP_MySQL_Token ) {
+			return $this->translate_token( $ast );
+		}
+
+		if ( ! $ast instanceof WP_Parser_Node ) {
+			throw new Exception( 'translate_query only accepts WP_MySQL_Token and WP_Parser_Node instances' );
+		}
+
+		$rule_name = $ast->rule_name;
+		switch ( $rule_name ) {
+			case 'qualifiedIdentifier':
+			case 'dotIdentifier':
+				return $this->translate_sequence( $ast->get_children(), '' );
+			case 'textStringLiteral':
+				if ( $ast->has_child_token( WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT ) ) {
+					return WP_SQLite_Token_Factory::double_quoted_value(
+						$ast->get_child_token( WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT )->value
+					)->value;
+				}
+				if ( $ast->has_child_token( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT ) ) {
+					return WP_SQLite_Token_Factory::raw(
+						$ast->get_child_token( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT )->value
+					)->value;
+				}
+				// Fall through to the default case.
+
+			default:
+				return $this->translate_sequence( $ast->get_children() );
+		}
+	}
+
+	private function translate_token( WP_MySQL_Token $token ) {
+		switch ( $token->id ) {
+			case WP_MySQL_Lexer::EOF:
+				return null;
+			case WP_MySQL_Lexer::IDENTIFIER:
+				return '"' . trim( $token->value, '`"' ) . '"';
+			default:
+				return $token->value;
+		}
+	}
+
+	private function translate_sequence( array $nodes, string $separator = ' ' ): string {
+		$parts = array();
+		foreach ( $nodes as $node ) {
+			$parts[] = $this->translate( $node );
+		}
+		return implode( $separator, $parts );
+	}
+
+	/**
 	 * This method makes database directory and .htaccess file.
 	 *
 	 * It is executed only once when the installation begins.
@@ -743,6 +821,44 @@ class WP_SQLite_Driver {
 		$this->error_messages          = array();
 		$this->is_error                = false;
 		$this->executed_sqlite_queries = array();
+	}
+
+	/**
+	 * Method to set the results from the fetched data.
+	 *
+	 * @param array $data The data to set.
+	 */
+	private function set_results_from_fetched_data( $data ) {
+		if ( null === $this->results ) {
+			$this->results = $data;
+		}
+		if ( is_array( $this->results ) ) {
+			$this->num_rows               = count( $this->results );
+			$this->last_select_found_rows = count( $this->results );
+		}
+		$this->return_value = $this->results;
+	}
+
+	/**
+	 * Method to set the results from the affected rows.
+	 *
+	 * @param int|null $override Override the affected rows.
+	 */
+	private function set_result_from_affected_rows( $override = null ) {
+		/*
+		 * SELECT CHANGES() is a workaround for the fact that
+		 * $stmt->rowCount() returns "0" (zero) with the
+		 * SQLite driver at all times.
+		 * Source: https://www.php.net/manual/en/pdostatement.rowcount.php
+		 */
+		if ( null === $override ) {
+			$this->affected_rows = (int) $this->execute_sqlite_query( 'select changes()' )->fetch()[0];
+		} else {
+			$this->affected_rows = $override;
+		}
+		$this->return_value = $this->affected_rows;
+		$this->num_rows     = $this->affected_rows;
+		$this->results      = $this->affected_rows;
 	}
 
 	/**
