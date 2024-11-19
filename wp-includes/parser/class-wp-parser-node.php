@@ -113,9 +113,9 @@ class WP_Parser_Node {
 
 	public function has_token( $token_id = null ) {
 		foreach ( $this->children as $child ) {
-			if ( $child instanceof WP_MySQL_Token && (
+			if ( $child instanceof WP_Parser_Token && (
 				null === $token_id ||
-				$child->type === $token_id
+				$child->id === $token_id
 			) ) {
 				return true;
 			}
@@ -125,9 +125,9 @@ class WP_Parser_Node {
 
 	public function get_token( $token_id = null ) {
 		foreach ( $this->children as $child ) {
-			if ( $child instanceof WP_MySQL_Token && (
+			if ( $child instanceof WP_Parser_Token && (
 				null === $token_id ||
-				$child->type === $token_id
+				$child->id === $token_id
 			) ) {
 				return $child;
 			}

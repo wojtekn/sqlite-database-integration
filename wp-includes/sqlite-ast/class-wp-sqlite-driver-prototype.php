@@ -141,7 +141,7 @@ class WP_SQLite_Driver_Prototype {
 
 		if ( $ast instanceof WP_MySQL_Token ) {
 			$token = $ast;
-			switch ( $token->type ) {
+			switch ( $token->id ) {
 				case WP_MySQL_Lexer::EOF:
 					return new WP_SQLite_Expression( array() );
 
