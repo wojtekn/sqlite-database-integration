@@ -115,7 +115,7 @@ class WP_Parser {
 			return false;
 		}
 
-		if ( 0 === count( $node->children ) ) {
+		if ( ! $node->has_child() ) {
 			return true;
 		}
 
