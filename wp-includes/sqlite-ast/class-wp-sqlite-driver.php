@@ -699,6 +699,23 @@ class WP_SQLite_Driver {
 					$stmt->fetchAll( $this->pdo_fetch_mode )
 				);
 				break;
+			case 'insertStatement':
+			case 'updateStatement':
+			case 'replaceStatement':
+			case 'deleteStatement':
+				if ( 'insertStatement' === $ast->rule_name ) {
+					$this->query_type = 'INSERT';
+				} elseif ( 'updateStatement' === $ast->rule_name ) {
+					$this->query_type = 'UPDATE';
+				} elseif ( 'replaceStatement' === $ast->rule_name ) {
+					$this->query_type = 'REPLACE';
+				} elseif ( 'deleteStatement' === $ast->rule_name ) {
+					$this->query_type = 'DELETE';
+				}
+				$query = $this->translate( $ast );
+				$this->execute_sqlite_query( $query );
+				$this->set_result_from_affected_rows();
+				break;
 			default:
 				throw new Exception( sprintf( 'Unsupported statement type: "%s"', $ast->rule_name ) );
 		}

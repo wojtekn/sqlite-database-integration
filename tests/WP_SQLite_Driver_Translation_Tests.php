@@ -86,6 +86,99 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		);
 	}
 
+	public function testInsert(): void {
+		$this->assertQuery(
+			'INSERT INTO "t" ( "c" ) VALUES ( 1 )',
+			'INSERT INTO t (c) VALUES (1)'
+		);
+
+		$this->assertQuery(
+			'INSERT INTO "s"."t" ( "c" ) VALUES ( 1 )',
+			'INSERT INTO s.t (c) VALUES (1)'
+		);
+
+		$this->assertQuery(
+			'INSERT INTO "t" ( "c1" , "c2" ) VALUES ( 1 , 2 )',
+			'INSERT INTO t (c1, c2) VALUES (1, 2)'
+		);
+
+		$this->assertQuery(
+			'INSERT INTO "t" ( "c" ) VALUES ( 1 ) , ( 2 )',
+			'INSERT INTO t (c) VALUES (1), (2)'
+		);
+
+		$this->assertQuery(
+			'INSERT INTO "t1" SELECT * FROM "t2"',
+			'INSERT INTO t1 SELECT * FROM t2'
+		);
+	}
+
+	public function testReplace(): void {
+		$this->assertQuery(
+			'REPLACE INTO "t" ( "c" ) VALUES ( 1 )',
+			'REPLACE INTO t (c) VALUES (1)'
+		);
+
+		$this->assertQuery(
+			'REPLACE INTO "s"."t" ( "c" ) VALUES ( 1 )',
+			'REPLACE INTO s.t (c) VALUES (1)'
+		);
+
+		$this->assertQuery(
+			'REPLACE INTO "t" ( "c1" , "c2" ) VALUES ( 1 , 2 )',
+			'REPLACE INTO t (c1, c2) VALUES (1, 2)'
+		);
+
+		$this->assertQuery(
+			'REPLACE INTO "t" ( "c" ) VALUES ( 1 ) , ( 2 )',
+			'REPLACE INTO t (c) VALUES (1), (2)'
+		);
+
+		$this->assertQuery(
+			'REPLACE INTO "t1" SELECT * FROM "t2"',
+			'REPLACE INTO t1 SELECT * FROM t2'
+		);
+	}
+
+	public function testUpdate(): void {
+		$this->assertQuery(
+			'UPDATE "t" SET "c" = 1',
+			'UPDATE t SET c = 1'
+		);
+
+		$this->assertQuery(
+			'UPDATE "s"."t" SET "c" = 1',
+			'UPDATE s.t SET c = 1'
+		);
+
+		$this->assertQuery(
+			'UPDATE "t" SET "c1" = 1 , "c2" = 2',
+			'UPDATE t SET c1 = 1, c2 = 2'
+		);
+
+		$this->assertQuery(
+			'UPDATE "t" SET "c" = 1 WHERE "c" = 2',
+			'UPDATE t SET c = 1 WHERE c = 2'
+		);
+	}
+
+	public function testDelete(): void {
+		$this->assertQuery(
+			'DELETE FROM "t"',
+			'DELETE FROM t'
+		);
+
+		$this->assertQuery(
+			'DELETE FROM "s"."t"',
+			'DELETE FROM s.t'
+		);
+
+		$this->assertQuery(
+			'DELETE FROM "t" WHERE "c" = 1',
+			'DELETE FROM t WHERE c = 1'
+		);
+	}
+
 	private function assertQuery( $expected, string $query ): void {
 		$driver = new WP_SQLite_Driver( new PDO( 'sqlite::memory:' ) );
 		$driver->query( $query );
