@@ -21,6 +21,65 @@ class WP_SQLite_Driver {
 	const SQLITE_BUSY   = 5;
 	const SQLITE_LOCKED = 6;
 
+	const DATA_TYPE_MAP = array(
+		// Numeric data types:
+		WP_MySQL_Lexer::BIT_SYMBOL                => 'INTEGER',
+		WP_MySQL_Lexer::BOOL_SYMBOL               => 'INTEGER',
+		WP_MySQL_Lexer::BOOLEAN_SYMBOL            => 'INTEGER',
+		WP_MySQL_Lexer::TINYINT_SYMBOL            => 'INTEGER',
+		WP_MySQL_Lexer::SMALLINT_SYMBOL           => 'INTEGER',
+		WP_MySQL_Lexer::MEDIUMINT_SYMBOL          => 'INTEGER',
+		WP_MySQL_Lexer::INT_SYMBOL                => 'INTEGER',
+		WP_MySQL_Lexer::INTEGER_SYMBOL            => 'INTEGER',
+		WP_MySQL_Lexer::BIGINT_SYMBOL             => 'INTEGER',
+		WP_MySQL_Lexer::FLOAT_SYMBOL              => 'REAL',
+		WP_MySQL_Lexer::DOUBLE_SYMBOL             => 'REAL',
+		WP_MySQL_Lexer::REAL_SYMBOL               => 'REAL',
+		WP_MySQL_Lexer::DECIMAL_SYMBOL            => 'REAL',
+		WP_MySQL_Lexer::DEC_SYMBOL                => 'REAL',
+		WP_MySQL_Lexer::FIXED_SYMBOL              => 'REAL',
+		WP_MySQL_Lexer::NUMERIC_SYMBOL            => 'REAL',
+
+		// String data types:
+		WP_MySQL_Lexer::CHAR_SYMBOL               => 'TEXT',
+		WP_MySQL_Lexer::VARCHAR_SYMBOL            => 'TEXT',
+		WP_MySQL_Lexer::NCHAR_SYMBOL              => 'TEXT',
+		WP_MySQL_Lexer::NVARCHAR_SYMBOL           => 'TEXT',
+		WP_MySQL_Lexer::TINYTEXT_SYMBOL           => 'TEXT',
+		WP_MySQL_Lexer::TEXT_SYMBOL               => 'TEXT',
+		WP_MySQL_Lexer::MEDIUMTEXT_SYMBOL         => 'TEXT',
+		WP_MySQL_Lexer::LONGTEXT_SYMBOL           => 'TEXT',
+		WP_MySQL_Lexer::ENUM_SYMBOL               => 'TEXT',
+
+		// Date and time data types:
+		WP_MySQL_Lexer::DATE_SYMBOL               => 'TEXT',
+		WP_MySQL_Lexer::TIME_SYMBOL               => 'TEXT',
+		WP_MySQL_Lexer::DATETIME_SYMBOL           => 'TEXT',
+		WP_MySQL_Lexer::TIMESTAMP_SYMBOL          => 'TEXT',
+		WP_MySQL_Lexer::YEAR_SYMBOL               => 'TEXT',
+
+		// Binary data types:
+		WP_MySQL_Lexer::BINARY_SYMBOL             => 'INTEGER',
+		WP_MySQL_Lexer::VARBINARY_SYMBOL          => 'BLOB',
+		WP_MySQL_Lexer::TINYBLOB_SYMBOL           => 'BLOB',
+		WP_MySQL_Lexer::BLOB_SYMBOL               => 'BLOB',
+		WP_MySQL_Lexer::MEDIUMBLOB_SYMBOL         => 'BLOB',
+		WP_MySQL_Lexer::LONGBLOB_SYMBOL           => 'BLOB',
+
+		// Spatial data types:
+		WP_MySQL_Lexer::GEOMETRY_SYMBOL           => 'TEXT',
+		WP_MySQL_Lexer::POINT_SYMBOL              => 'TEXT',
+		WP_MySQL_Lexer::LINESTRING_SYMBOL         => 'TEXT',
+		WP_MySQL_Lexer::POLYGON_SYMBOL            => 'TEXT',
+		WP_MySQL_Lexer::MULTIPOINT_SYMBOL         => 'TEXT',
+		WP_MySQL_Lexer::MULTILINESTRING_SYMBOL    => 'TEXT',
+		WP_MySQL_Lexer::MULTIPOLYGON_SYMBOL       => 'TEXT',
+		WP_MySQL_Lexer::GEOMCOLLECTION_SYMBOL     => 'TEXT',
+		WP_MySQL_Lexer::GEOMETRYCOLLECTION_SYMBOL => 'TEXT',
+
+		// SERIAL, SET, and JSON types are handled in the translation process.
+	);
+
 	const DATA_TYPES_CACHE_TABLE = '_mysql_data_types_cache';
 
 	const CREATE_DATA_TYPES_CACHE_TABLE = 'CREATE TABLE IF NOT EXISTS _mysql_data_types_cache (
@@ -716,6 +775,25 @@ class WP_SQLite_Driver {
 				$this->execute_sqlite_query( $query );
 				$this->set_result_from_affected_rows();
 				break;
+			case 'createStatement':
+				$this->query_type = 'CREATE';
+				$subtree          = $ast->get_child_node();
+				switch ( $subtree->rule_name ) {
+					case 'createTable':
+						$query = $this->translate( $ast );
+						$this->execute_sqlite_query( $query );
+						$this->set_result_from_affected_rows();
+						break;
+					default:
+						throw new Exception(
+							sprintf(
+								'Unsupported statement type: "%s" > "%s"',
+								$ast->rule_name,
+								$subtree->rule_name
+							)
+						);
+				}
+				break;
 			default:
 				throw new Exception( sprintf( 'Unsupported statement type: "%s"', $ast->rule_name ) );
 		}
@@ -739,19 +817,51 @@ class WP_SQLite_Driver {
 			case 'qualifiedIdentifier':
 			case 'dotIdentifier':
 				return $this->translate_sequence( $ast->get_children(), '' );
+			case 'identifierKeyword':
+				return '"' . $this->translate( $ast->get_child() ) . '"';
 			case 'textStringLiteral':
-				if ( $ast->has_child_token( WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT ) ) {
-					return WP_SQLite_Token_Factory::double_quoted_value(
-						$ast->get_child_token( WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT )->value
-					)->value;
+				$token = $ast->get_child_token();
+				if ( WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
+					return WP_SQLite_Token_Factory::double_quoted_value( $token->value )->value;
 				}
-				if ( $ast->has_child_token( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT ) ) {
-					return WP_SQLite_Token_Factory::raw(
-						$ast->get_child_token( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT )->value
-					)->value;
+				if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id ) {
+					return WP_SQLite_Token_Factory::raw( $token->value )->value;
 				}
-				// Fall through to the default case.
+				throw $this->invalid_input_exception();
+			case 'dataType':
+			case 'nchar':
+				$child = $ast->get_child();
+				if ( $child instanceof WP_Parser_Node ) {
+					return $this->translate( $child );
+				}
 
+				// Handle optional prefixes (data type is the second token):
+				//  1. LONG VARCHAR, LONG CHAR(ACTER) VARYING, LONG VARBINARY.
+				//  2. NATIONAL CHAR, NATIONAL VARCHAR, NATIONAL CHAR(ACTER) VARYING.
+				if ( WP_MySQL_Lexer::LONG_SYMBOL === $child->id ) {
+					$child = $ast->get_child_tokens()[1] ?? null;
+				} elseif ( WP_MySQL_Lexer::NATIONAL_SYMBOL === $child->id ) {
+					$child = $ast->get_child_tokens()[1] ?? null;
+				}
+
+				if ( null === $child ) {
+					throw $this->invalid_input_exception();
+				}
+
+				$type = self::DATA_TYPE_MAP[ $child->id ] ?? null;
+				if ( null !== $type ) {
+					return $type;
+				}
+
+				// SERIAL is an alias for BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE.
+				if ( WP_MySQL_Lexer::SERIAL_SYMBOL === $child->id ) {
+					return 'INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT UNIQUE';
+				}
+
+				// @TODO: Handle SET and JSON.
+				throw $this->not_supported_exception(
+					sprintf( 'data type: %s', $child->value )
+				);
 			default:
 				return $this->translate_sequence( $ast->get_children() );
 		}
@@ -763,6 +873,8 @@ class WP_SQLite_Driver {
 				return null;
 			case WP_MySQL_Lexer::IDENTIFIER:
 				return '"' . trim( $token->value, '`"' ) . '"';
+			case WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL:
+				return 'AUTOINCREMENT';
 			default:
 				return $token->value;
 		}
@@ -911,5 +1023,15 @@ class WP_SQLite_Driver {
 		);
 		$this->error_messages[] = $message;
 		$this->is_error         = true;
+	}
+
+	private function invalid_input_exception() {
+		throw new Exception( 'MySQL query syntax error.' );
+	}
+
+	private function not_supported_exception( string $cause ): Exception {
+		return new Exception(
+			sprintf( 'MySQL query not supported. Cause: %s', $cause )
+		);
 	}
 }
