@@ -862,6 +862,13 @@ class WP_SQLite_Driver {
 				throw $this->not_supported_exception(
 					sprintf( 'data type: %s', $child->value )
 				);
+			case 'systemVariable':
+				// @TODO: Emulate some system variables, or use reasonable defaults.
+				//        See: https://dev.mysql.com/doc/refman/8.4/en/server-system-variable-reference.html
+				//        See: https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html
+
+				// When we have no value, it's reasonable to use NULL.
+				return 'NULL';
 			default:
 				return $this->translate_sequence( $ast->get_children() );
 		}

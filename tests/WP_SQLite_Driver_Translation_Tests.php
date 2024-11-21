@@ -294,6 +294,23 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		);
 	}
 
+	public function testSystemVariables(): void {
+		$this->assertQuery(
+			'SELECT NULL',
+			'SELECT @@sql_mode'
+		);
+
+		$this->assertQuery(
+			'SELECT NULL',
+			'SELECT @@SESSION.sql_mode'
+		);
+
+		$this->assertQuery(
+			'SELECT NULL',
+			'SELECT @@GLOBAL.sql_mode'
+		);
+	}
+
 	private function assertQuery( $expected, string $query ): void {
 		$driver = new WP_SQLite_Driver( new PDO( 'sqlite::memory:' ) );
 		$driver->query( $query );
