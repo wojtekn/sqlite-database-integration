@@ -760,12 +760,12 @@ class WP_SQLite_Driver {
 				break;
 			case 'insertStatement':
 			case 'updateStatement':
+				$this->execute_update_statement( $ast );
+				break;
 			case 'replaceStatement':
 			case 'deleteStatement':
 				if ( 'insertStatement' === $ast->rule_name ) {
 					$this->query_type = 'INSERT';
-				} elseif ( 'updateStatement' === $ast->rule_name ) {
-					$this->query_type = 'UPDATE';
 				} elseif ( 'replaceStatement' === $ast->rule_name ) {
 					$this->query_type = 'REPLACE';
 				} elseif ( 'deleteStatement' === $ast->rule_name ) {
@@ -797,6 +797,52 @@ class WP_SQLite_Driver {
 			default:
 				throw new Exception( sprintf( 'Unsupported statement type: "%s"', $ast->rule_name ) );
 		}
+	}
+
+	private function execute_update_statement( WP_Parser_Node $node ): void {
+		// @TODO: Add support for UPDATE with multiple tables and JOINs.
+		//        SQLite supports them in the FROM clause.
+
+		$has_order = $node->has_child_node( 'orderClause' );
+		$has_limit = $node->has_child_node( 'simpleLimitClause' );
+
+		/*
+		 * SQLite doesn't support UPDATE with ORDER BY/LIMIT.
+		 * We need to use a subquery to emulate this behavior.
+		 *
+		 * For instance, the following query:
+		 *   UPDATE t SET c = 1 WHERE c = 2 LIMIT 1;
+		 * Will be rewritten to:
+		 *   UPDATE t SET c = 1 WHERE rowid IN ( SELECT rowid FROM t WHERE c = 2 LIMIT 1 );
+		 */
+		if ( $has_order || $has_limit ) {
+			$subquery = 'SELECT rowid FROM ' . $this->translate_sequence(
+				array(
+					$node->get_descendant_node( 'tableReference' ),
+					$node->get_descendant_node( 'whereClause' ),
+					$node->get_descendant_node( 'orderClause' ),
+					$node->get_descendant_node( 'simpleLimitClause' ),
+				)
+			);
+
+			$update_nodes = array();
+			foreach ( $node->get_children() as $child ) {
+				$update_nodes[] = $child;
+				if (
+					$child instanceof WP_Parser_Node
+					&& 'updateList' === $child->rule_name
+				) {
+					// Skip WHERE, ORDER BY, and LIMIT.
+					break;
+				}
+			}
+			$query = $this->translate_sequence( $update_nodes )
+				. ' WHERE rowid IN ( ' . $subquery . ' )';
+		} else {
+			$query = $this->translate( $node );
+		}
+		$this->execute_sqlite_query( $query );
+		$this->set_result_from_affected_rows();
 	}
 
 	private function translate( $ast ) {
@@ -890,6 +936,9 @@ class WP_SQLite_Driver {
 	private function translate_sequence( array $nodes, string $separator = ' ' ): string {
 		$parts = array();
 		foreach ( $nodes as $node ) {
+			if ( null === $node ) {
+				continue;
+			}
 			$parts[] = $this->translate( $node );
 		}
 		return implode( $separator, $parts );

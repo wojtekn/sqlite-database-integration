@@ -160,6 +160,18 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			'UPDATE "t" SET "c" = 1 WHERE "c" = 2',
 			'UPDATE t SET c = 1 WHERE c = 2'
 		);
+
+		// UPDATE with LIMIT.
+		$this->assertQuery(
+			'UPDATE "t" SET "c" = 1 WHERE rowid IN ( SELECT rowid FROM "t" LIMIT 1 )',
+			'UPDATE t SET c = 1 LIMIT 1'
+		);
+
+		// UPDATE with ORDER BY and LIMIT.
+		$this->assertQuery(
+			'UPDATE "t" SET "c" = 1 WHERE rowid IN ( SELECT rowid FROM "t" ORDER BY "c" ASC LIMIT 1 )',
+			'UPDATE t SET c = 1 ORDER BY c ASC LIMIT 1'
+		);
 	}
 
 	public function testDelete(): void {
