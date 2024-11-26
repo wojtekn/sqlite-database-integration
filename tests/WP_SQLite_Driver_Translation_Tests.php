@@ -15,8 +15,17 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 	 */
 	private static $grammar;
 
+	/**
+	 * @var WP_SQLite_Driver
+	 */
+	private $driver;
+
 	public static function setUpBeforeClass(): void {
 		self::$grammar = new WP_Parser_Grammar( include self::GRAMMAR_PATH );
+	}
+
+	public function setUp(): void {
+		$this->driver = new WP_SQLite_Driver( new PDO( 'sqlite::memory:' ) );
 	}
 
 	public function testSelect(): void {
@@ -207,9 +216,73 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			'CREATE TABLE t (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT)'
 		);
 
+		// ENGINE is not supported in SQLite.
+		$this->assertQuery(
+			'CREATE TABLE "t" ( "id" INTEGER )',
+			'CREATE TABLE t (id INT) ENGINE=InnoDB'
+		);
+
+		/*
+		 * PRIMARY KEY without AUTOINCREMENT:
+		 * In this case, integer must be represented as INT, not INTEGER. SQLite
+		 * treats "INTEGER PRIMARY KEY" as an alias for ROWID, causing unintended
+		 * auto-increment-like behavior for a non-autoincrement column.
+		 *
+		 * See:
+		 *  https://www.sqlite.org/lang_createtable.html#rowids_and_the_integer_primary_key
+		 */
+		$this->assertQuery(
+			'CREATE TABLE "t" ( "id" INT PRIMARY KEY )',
+			'CREATE TABLE t (id INT PRIMARY KEY)'
+		);
+
+		// With AUTOINCREMENT, we expect "INTEGER".
+		$this->assertQuery(
+			'CREATE TABLE "t" ( "id" INTEGER PRIMARY KEY AUTOINCREMENT )',
+			'CREATE TABLE t (id INT PRIMARY KEY AUTO_INCREMENT)'
+		);
+
+		// In SQLite, PRIMARY KEY must come before AUTOINCREMENT.
+		$this->assertQuery(
+			'CREATE TABLE "t" ( "id" INTEGER PRIMARY KEY AUTOINCREMENT )',
+			'CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY)'
+		);
+
+		// In SQLite, AUTOINCREMENT cannot be specified separately from PRIMARY KEY.
+		$this->assertQuery(
+			'CREATE TABLE "t" ( "id" INTEGER PRIMARY KEY AUTOINCREMENT )',
+			'CREATE TABLE t (id INT AUTO_INCREMENT, PRIMARY KEY(id))'
+		);
+
+		// IF NOT EXISTS.
 		$this->assertQuery(
 			'CREATE TABLE IF NOT EXISTS "t" ( "id" INTEGER )',
 			'CREATE TABLE IF NOT EXISTS t (id INT)'
+		);
+
+		// CREATE TABLE AS SELECT ...
+		$this->assertQuery(
+			'CREATE TABLE "t1" AS SELECT * FROM "t2"',
+			'CREATE TABLE t1 AS SELECT * FROM t2'
+		);
+
+		// CREATE TABLE SELECT ...
+		// The "AS" keyword is optional in MySQL, but required in SQLite.
+		$this->assertQuery(
+			'CREATE TABLE "t1" AS SELECT * FROM "t2"',
+			'CREATE TABLE t1 SELECT * FROM t2'
+		);
+
+		// TEMPORARY.
+		$this->assertQuery(
+			'CREATE TEMPORARY TABLE "t" ( "id" INTEGER )',
+			'CREATE TEMPORARY TABLE t (id INT)'
+		);
+
+		// TEMPORARY & IF NOT EXISTS.
+		$this->assertQuery(
+			'CREATE TEMPORARY TABLE IF NOT EXISTS "t" ( "id" INTEGER )',
+			'CREATE TEMPORARY TABLE IF NOT EXISTS t (id INT)'
 		);
 	}
 
@@ -324,18 +397,19 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 	}
 
 	private function assertQuery( $expected, string $query ): void {
-		$driver = new WP_SQLite_Driver( new PDO( 'sqlite::memory:' ) );
-		$driver->query( $query );
+		$this->driver->query( $query );
 
 		// Check for SQLite syntax errors.
 		// This ensures that invalid SQLite syntax will always fail, even if it
 		// was the expected result. It prevents us from using wrong assertions.
-		$error = $driver->get_error_message();
+		$error = $this->driver->get_error_message();
 		if ( $error && preg_match( '/(SQLSTATE\[HY000].+syntax error\.)/i', $error, $matches ) ) {
-			$this->fail( 'SQLite syntax error: ' . $matches[1] );
+			$this->fail(
+				sprintf( "SQLite syntax error: %s\nMySQL query: %s", $matches[1], $query )
+			);
 		}
 
-		$executed_queries = array_column( $driver->executed_sqlite_queries, 'sql' );
+		$executed_queries = array_column( $this->driver->executed_sqlite_queries, 'sql' );
 
 		// Remove BEGIN and COMMIT/ROLLBACK queries.
 		if ( count( $executed_queries ) > 2 ) {

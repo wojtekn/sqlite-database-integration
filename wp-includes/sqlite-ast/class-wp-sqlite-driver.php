@@ -780,9 +780,7 @@ class WP_SQLite_Driver {
 				$subtree          = $ast->get_child_node();
 				switch ( $subtree->rule_name ) {
 					case 'createTable':
-						$query = $this->translate( $ast );
-						$this->execute_sqlite_query( $query );
-						$this->set_result_from_affected_rows();
+						$this->execute_create_table_statement( $ast );
 						break;
 					default:
 						throw new Exception(
@@ -842,6 +840,97 @@ class WP_SQLite_Driver {
 			$query = $this->translate( $node );
 		}
 		$this->execute_sqlite_query( $query );
+		$this->set_result_from_affected_rows();
+	}
+
+	private function execute_create_table_statement( WP_Parser_Node $node ): void {
+		$element_list = $node->get_descendant_node( 'tableElementList' );
+		if ( null === $element_list ) {
+			$query = $this->translate( $node );
+			$this->execute_sqlite_query( $query );
+			$this->set_result_from_affected_rows();
+			return;
+		}
+
+		/*
+		 * We need to handle some differences between MySQL and SQLite:
+		 *
+		 * 1. Inline index definitions:
+		 *
+		 *  In MySQL, we can define an index inline with a column definition.
+		 *  In SQLite, we need to define indexes separately, using extra queries.
+		 *
+		 * 2. Column and constraint definition order:
+		 *
+		 *  In MySQL, column and constraint definitions can be arbitrarily mixed.
+		 *  In SQLite, column definitions must come first, followed by constraints.
+		 *
+		 * 2. Auto-increment:
+		 *
+		 *  In MySQL, there can at most one AUTO_INCREMENT column, and it must be
+		 *  a PRIMARY KEY, or the first column in a multi-column KEY.
+		 *
+		 *  In SQLite, there can at most one AUTOINCREMENT column, and it must be
+		 *  a PRIMARY KEY, defined inline on a single column.
+		 *
+		 *  Therefore, the following valid MySQL construct is not supported:
+		 *    CREATE TABLE t ( a INT AUTO_INCREMENT, b INT, PRIMARY KEY (a, b) );
+		 *  @TODO: Support it with a single-column PK and a multi-column UNIQUE KEY.
+		 */
+
+		// Collect column, index, and constraint nodes.
+		$columns                = array();
+		$constraints            = array();
+		$indexes                = array();
+		$has_autoincrement      = false;
+		$primary_key_constraint = null; // Does not include inline PK definition.
+
+		foreach ( $element_list->get_descendant_nodes( 'columnDefinition' ) as $child ) {
+			if ( null !== $child->get_descendant_token( WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL ) ) {
+				$has_autoincrement = true;
+			}
+			// @TODO: Collect inline index definitions.
+			$columns[] = $child;
+		}
+
+		foreach ( $element_list->get_descendant_nodes( 'tableConstraintDef' ) as $child ) {
+			if ( null !== $child->get_descendant_token( WP_MySQL_Lexer::PRIMARY_SYMBOL ) ) {
+				$primary_key_constraint = $child;
+			} else {
+				$constraints[] = $child;
+			}
+		}
+
+		/*
+		 * If we have a PRIMARY KEY constraint:
+		 *  1. Without auto-increment, we can put it back to the list of constraints.
+		 *  2. With auto-increment, we need to later move it to the column definition.
+		 */
+		if ( null !== $primary_key_constraint ) {
+			if ( ! $has_autoincrement ) {
+				$constraints[] = $primary_key_constraint;
+			} elseif ( count( $primary_key_constraint->get_descendant_nodes( 'keyPart' ) ) > 1 ) {
+				throw $this->not_supported_exception(
+					'Composite primary key with AUTO_INCREMENT'
+				);
+			}
+		}
+
+		$query_parts = array( 'CREATE' );
+		foreach ( $node->get_child_node()->get_children() as $child ) {
+			if ( $child instanceof WP_Parser_Node && 'tableElementList' === $child->rule_name ) {
+				$query_parts[] = $this->translate_sequence( array_merge( $columns, $constraints ), ' , ' );
+			} else {
+				$part = $this->translate( $child );
+				if ( null !== $part ) {
+					$query_parts[] = $part;
+				}
+			}
+		}
+
+		// @TODO: Execute queries for inline index definitions.
+
+		$this->execute_sqlite_query( implode( ' ', $query_parts ) );
 		$this->set_result_from_affected_rows();
 	}
 
@@ -915,6 +1004,64 @@ class WP_SQLite_Driver {
 
 				// When we have no value, it's reasonable to use NULL.
 				return 'NULL';
+			case 'fieldDefinition':
+				/*
+				 * In SQLite, there is the a quirk for backward compatibility:
+				 *  1. INTEGER PRIMARY KEY creates an alias of ROWID.
+				 *  2. INT PRIMARY KEY will  not alias of ROWID.
+				 *
+				 * Therefore, we want to:
+				 *  1. Use INTEGER PRIMARY KEY for when we have AUTOINCREMENT.
+				 *  2. Use INT PRIMARY KEY otherwise.
+				 */
+				$has_primary_key   = $ast->get_descendant_token( WP_MySQL_Lexer::KEY_SYMBOL ) !== null;
+				$has_autoincrement = $ast->get_descendant_token( WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL ) !== null;
+				$children          = $ast->get_children();
+				$data_type_node    = array_shift( $children );
+				$data_type         = $this->translate( $data_type_node );
+				if ( $has_primary_key && 'INTEGER' === $data_type ) {
+					$data_type = $has_autoincrement ? 'INTEGER' : 'INT';
+				}
+
+				$attributes = $this->translate_sequence( $children );
+				$definition = $data_type . ( null === $attributes ? '' : " $attributes" );
+
+				/*
+				 * In SQLite, AUTOINCREMENT must always be preceded by PRIMARY KEY.
+				 * Therefore, we remove both PRIMARY KEY and AUTOINCREMENT from
+				 * column attributes, and append them here in SQLite-friendly way.
+				 */
+				if ( $has_autoincrement ) {
+					return $definition . ' PRIMARY KEY AUTOINCREMENT';
+				} elseif ( $has_primary_key ) {
+					return $definition . ' PRIMARY KEY';
+				}
+				return $definition;
+			case 'columnAttribute':
+			case 'gcolAttribute':
+				/*
+				 * Remove PRIMARY KEY and AUTOINCREMENT from the column attributes.
+				 * They are handled in the "fieldDefinition" node.
+				 */
+				if ( $ast->has_child_token( WP_MySQL_Lexer::KEY_SYMBOL ) ) {
+					return null;
+				}
+				if ( $ast->has_child_token( WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL ) ) {
+					return null;
+				}
+				return $this->translate_sequence( $ast->get_children() );
+			case 'createTableOptions':
+				return $this->translate_sequence( $ast->get_children(), ', ' );
+			case 'createTableOption':
+				if ( $ast->get_child_token( WP_MySQL_Lexer::ENGINE_SYMBOL ) ) {
+					return null;
+				}
+				return $this->translate_sequence( $ast->get_children() );
+			case 'duplicateAsQueryExpression':
+				// @TODO: How to handle IGNORE/REPLACE?
+
+				// The "AS" keyword is optional in MySQL, but required in SQLite.
+				return 'AS ' . $this->translate( $ast->get_child_node() );
 			default:
 				return $this->translate_sequence( $ast->get_children() );
 		}
@@ -933,13 +1080,21 @@ class WP_SQLite_Driver {
 		}
 	}
 
-	private function translate_sequence( array $nodes, string $separator = ' ' ): string {
+	private function translate_sequence( array $nodes, string $separator = ' ' ): ?string {
 		$parts = array();
 		foreach ( $nodes as $node ) {
 			if ( null === $node ) {
 				continue;
 			}
-			$parts[] = $this->translate( $node );
+
+			$translated = $this->translate( $node );
+			if ( null === $translated ) {
+				continue;
+			}
+			$parts[] = $translated;
+		}
+		if ( 0 === count( $parts ) ) {
+			return null;
 		}
 		return implode( $separator, $parts );
 	}
