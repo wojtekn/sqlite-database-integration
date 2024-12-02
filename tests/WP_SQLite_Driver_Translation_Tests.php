@@ -286,6 +286,55 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		);
 	}
 
+	public function testAlterTable(): void {
+		// Prepare a real table, so we can test multi-operation alter statements.
+		// Otherwise, we'd hit and exception and rollback after the first query.
+		$this->assertQuery(
+			'CREATE TABLE "t" ( "id" INTEGER PRIMARY KEY AUTOINCREMENT )',
+			'CREATE TABLE t (id INT PRIMARY KEY AUTO_INCREMENT)'
+		);
+
+		// ADD COLUMN.
+		$this->assertQuery(
+			'ALTER TABLE "t" ADD COLUMN "a" INTEGER',
+			'ALTER TABLE t ADD a INT'
+		);
+
+		// ADD COLUMN with multiple columns.
+		$this->assertQuery(
+			array(
+				'ALTER TABLE "t" ADD COLUMN "b" INTEGER',
+				'ALTER TABLE "t" ADD COLUMN "c" TEXT',
+				'ALTER TABLE "t" ADD COLUMN "d" INTEGER',
+			),
+			'ALTER TABLE t ADD b INT, ADD c TEXT, ADD d BOOL'
+		);
+
+		// DROP COLUMN.
+		$this->assertQuery(
+			'ALTER TABLE "t" DROP COLUMN "a"',
+			'ALTER TABLE t DROP a'
+		);
+
+		// DROP COLUMN with multiple columns.
+		$this->assertQuery(
+			array(
+				'ALTER TABLE "t" DROP COLUMN "b"',
+				'ALTER TABLE "t" DROP COLUMN "c"',
+			),
+			'ALTER TABLE t DROP b, DROP c'
+		);
+
+		// ADD COLUMN and DROP COLUMN combined.
+		$this->assertQuery(
+			array(
+				'ALTER TABLE "t" ADD COLUMN "a" INTEGER',
+				'ALTER TABLE "t" DROP COLUMN "d"',
+			),
+			'ALTER TABLE t ADD a INT, DROP d'
+		);
+	}
+
 	public function testDataTypes(): void {
 		// Numeric data types.
 		$this->assertQuery(

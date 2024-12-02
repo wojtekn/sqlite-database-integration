@@ -792,6 +792,36 @@ class WP_SQLite_Driver {
 						);
 				}
 				break;
+			case 'alterStatement':
+				$this->query_type = 'ALTER';
+				$subtree          = $ast->get_child_node();
+				switch ( $subtree->rule_name ) {
+					case 'alterTable':
+						$this->execute_alter_table_statement( $ast );
+						break;
+					default:
+						throw new Exception(
+							sprintf(
+								'Unsupported statement type: "%s" > "%s"',
+								$ast->rule_name,
+								$subtree->rule_name
+							)
+						);
+				}
+				break;
+			case 'dropStatement':
+				$this->query_type = 'DROP';
+				$query            = $this->translate( $ast );
+				$this->execute_sqlite_query( $query );
+				$this->set_result_from_affected_rows();
+				break;
+			case 'setStatement':
+				/*
+				 * It would be lovely to support at least SET autocommit,
+				 * but I don't think that is even possible with SQLite.
+				 */
+				$this->results = 0;
+				break;
 			default:
 				throw new Exception( sprintf( 'Unsupported statement type: "%s"', $ast->rule_name ) );
 		}
@@ -931,6 +961,68 @@ class WP_SQLite_Driver {
 		// @TODO: Execute queries for inline index definitions.
 
 		$this->execute_sqlite_query( implode( ' ', $query_parts ) );
+		$this->set_result_from_affected_rows();
+	}
+
+	private function execute_alter_table_statement( WP_Parser_Node $node ): void {
+		$table_name = $this->translate( $node->get_descendant_node( 'tableRef' ) );
+		$actions    = $node->get_descendant_nodes( 'alterListItem' );
+
+		/*
+		 * SQLite supports only a small subset of MySQL ALTER TABLE statement.
+		 * We need to handle some differences and emulate some operations:
+		 *
+		 * 1. Multiple operations in a single ALTER TABLE statement.
+		 *
+		 *  SQLite doesn't support multiple operations in a single ALTER TABLE
+		 *  statement. We need to execute each operation as a separate query.
+		 *
+		 * 2. ADD COLUMN in SQLite doesn't support some valid MySQL constructs:
+		 *
+		 *  - Adding a column with PRIMARY KEY or UNIQUE constraint.
+		 *  - Adding a column with AUTOINCREMENT.
+		 *  - Adding a column with CURRENT_TIME, CURRENT_DATE, CURRENT_TIMESTAMP,
+		 *    or an expression in parentheses as a default value.
+		 *  - Adding a NOT NULL column without a default value when the table is
+		 *    not empty. In MySQL, this depends on the data type and SQL mode.
+		 *
+		 *    @TODO: Address these nuances.
+		 */
+		foreach ( $actions as $action ) {
+			$token = $action->get_child_token();
+
+			// ADD column/constraint.
+			if ( WP_MySQL_Lexer::ADD_SYMBOL === $token->id ) {
+				// ADD COLUMN.
+				$field_definition = $action->get_descendant_node( 'fieldDefinition' );
+				if ( null !== $field_definition ) {
+					$field_name = $this->translate( $action->get_child_node( 'identifier' ) );
+					$field      = $this->translate( $field_definition );
+					$this->execute_sqlite_query(
+						sprintf( 'ALTER TABLE %s ADD COLUMN %s %s', $table_name, $field_name, $field )
+					);
+				}
+
+				// ADD CONSTRAINT.
+				$constraint = $action->get_descendant_node( 'tableConstraintDef' );
+				if ( null !== $constraint ) {
+					$constraint_name = $this->translate( $constraint->get_child_node( 'identifier' ) );
+					$constraint      = $this->translate( $constraint );
+					$this->execute_sqlite_query(
+						sprintf( 'ALTER TABLE %s ADD CONSTRAINT %s %s', $table_name, $constraint_name, $constraint )
+					);
+				}
+			} elseif ( WP_MySQL_Lexer::DROP_SYMBOL === $token->id ) {
+				// DROP COLUMN.
+				$field_name = $this->translate( $action->get_child_node( 'columnInternalRef' ) );
+				if ( null !== $field_name ) {
+					$this->execute_sqlite_query(
+						sprintf( 'ALTER TABLE %s DROP COLUMN %s', $table_name, $field_name )
+					);
+				}
+			}
+		}
+
 		$this->set_result_from_affected_rows();
 	}
 
