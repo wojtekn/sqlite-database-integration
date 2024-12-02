@@ -247,7 +247,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 	public function testCastAsBinary() {
 		$this->assertQuery(
 			// Use a confusing alias to make sure it replaces only the correct token
-			"SELECT CAST('ABC' AS BINARY) as binary;"
+			"SELECT CAST('ABC' AS BINARY) as `binary`;"
 		);
 		$results = $this->engine->get_query_results();
 		$this->assertCount( 1, $results );
@@ -470,7 +470,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 			"CREATE TABLE _tmp__table (
 					ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
 					default_empty_string VARCHAR(255) default '',
-					null_no_default VARCHAR(255),
+					null_no_default VARCHAR(255)
 				);"
 		);
 
@@ -596,7 +596,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		);
 
 		$this->assertQuery(
-			"SHOW TABLE STATUS FROM 'mydb';"
+			'SHOW TABLE STATUS FROM mydb;'
 		);
 
 		$this->assertCount(
@@ -619,7 +619,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		);
 
 		$this->assertQuery(
-			"SHOW TABLE STATUS IN 'mydb';"
+			'SHOW TABLE STATUS IN mydb;'
 		);
 
 		$this->assertCount(
@@ -649,7 +649,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 			);"
 		);
 		$this->assertQuery(
-			"SHOW TABLE STATUS IN 'mydb';"
+			'SHOW TABLE STATUS IN mydb;'
 		);
 
 		$this->assertCount(
@@ -807,7 +807,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$result = $this->assertQuery(
 			'CREATE TABLE wptests_users (
 				ID bigint(20) unsigned NOT NULL auto_increment,
-				PRIMARY KEY  (ID),
+				PRIMARY KEY  (ID)
 			) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci'
 		);
 		$this->assertEquals( '', $this->engine->get_error_message() );
@@ -818,7 +818,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$result = $this->assertQuery(
 			'CREATE TABLE wptests_users (
 				ID bigint(20) unsigned NOT NULL auto_increment,
-				UNIQUE KEY (ID),
+				UNIQUE KEY (ID)
 			)'
 		);
 		$this->assertEquals( '', $this->engine->get_error_message() );
@@ -832,7 +832,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 				decimal_column DECIMAL(10,2) NOT NULL DEFAULT 0,
 				float_column FLOAT(10,2) NOT NULL DEFAULT 0,
 				enum_column ENUM('a', 'b', 'c') NOT NULL DEFAULT 'a',
-				PRIMARY KEY  (ID),
+				PRIMARY KEY  (ID)
 			)"
 		);
 		$this->assertEquals( '', $this->engine->get_error_message() );
@@ -2716,7 +2716,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 	public function testCalcFoundRows() {
 		$result = $this->assertQuery(
 			"CREATE TABLE wptests_dummy (
-				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
 				user_login TEXT NOT NULL default ''
 			);"
 		);
@@ -3030,7 +3030,7 @@ QUERY
 		// Create a temporary table for testing
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
-            ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
             name varchar(20) NOT NULL default ''
         );"
 		);
@@ -3114,7 +3114,7 @@ QUERY
 	public function testOnConflictReplace() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
-				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
 				name varchar(20) NOT NULL default 'default-value',
 				unique_name varchar(20) NOT NULL default 'unique-default-value',
 				inline_unique_name varchar(20) NOT NULL default 'inline-unique-default-value',
