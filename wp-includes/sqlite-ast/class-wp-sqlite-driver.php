@@ -95,6 +95,13 @@ class WP_SQLite_Driver {
 	private static $grammar;
 
 	/**
+	 * The database name. In WordPress, the value of DB_NAME.
+	 *
+	 * @var string
+	 */
+	private $db_name;
+
+	/**
 	 * Class variable to reference to the PDO instance.
 	 *
 	 * @access private
@@ -248,15 +255,22 @@ class WP_SQLite_Driver {
 	private $last_sqlite_error;
 
 	/**
+	 * @var WP_SQLite_Information_Schema_Builder
+	 */
+	private $information_schema_builder;
+
+	/**
 	 * Constructor.
 	 *
 	 * Create PDO object, set user defined functions and initialize other settings.
 	 * Don't use parent::__construct() because this class does not only returns
 	 * PDO instance but many others jobs.
 	 *
-	 * @param PDO $pdo The PDO object.
+	 * @param string $db_name The database name. In WordPress, the value of DB_NAME.
+	 * @param PDO|null $pdo The PDO object.
 	 */
-	public function __construct( $pdo = null ) {
+	public function __construct( string $db_name, ?PDO $pdo = null ) {
+		$this->db_name = $db_name;
 		if ( ! $pdo ) {
 			if ( ! is_file( FQDB ) ) {
 				$this->prepare_directory();
@@ -312,6 +326,12 @@ class WP_SQLite_Driver {
 		$this->sqlite_system_tables [ self::DATA_TYPES_CACHE_TABLE ] = self::DATA_TYPES_CACHE_TABLE;
 
 		$this->pdo = $pdo;
+
+		$this->information_schema_builder = new WP_SQLite_Information_Schema_Builder(
+			$this->db_name,
+			array( $this, 'execute_sqlite_query' )
+		);
+		$this->information_schema_builder->ensure_tables();
 
 		// Load MySQL grammar.
 		if ( null === self::$grammar ) {
@@ -962,6 +982,9 @@ class WP_SQLite_Driver {
 
 		$this->execute_sqlite_query( implode( ' ', $query_parts ) );
 		$this->set_result_from_affected_rows();
+
+		// Save information to "information_schema" tables.
+		$this->information_schema_builder->create_table( $node );
 	}
 
 	private function execute_alter_table_statement( WP_Parser_Node $node ): void {
@@ -1149,6 +1172,8 @@ class WP_SQLite_Driver {
 					return null;
 				}
 				return $this->translate_sequence( $ast->get_children() );
+			case 'defaultCollation':
+				return null;
 			case 'duplicateAsQueryExpression':
 				// @TODO: How to handle IGNORE/REPLACE?
 

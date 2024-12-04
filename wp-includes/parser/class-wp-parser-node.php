@@ -262,4 +262,20 @@ class WP_Parser_Node {
 		}
 		return $all_descendants;
 	}
+
+	public function get_value(): string {
+		if ( count( $this->children ) === 0 ) {
+			return '';
+		}
+
+		$value = '';
+		foreach ( $this->children as $child ) {
+			if ( $child instanceof WP_Parser_Token ) {
+				$value .= ' ' . $child->value;
+			} else {
+				$value .= $child->get_value();
+			}
+		}
+		return $value;
+	}
 }

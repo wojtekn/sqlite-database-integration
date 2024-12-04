@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/WP_SQLite_Translator_Tests.php';
 require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-driver.php';
+require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-information-schema-builder.php';
 require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-expression.php';
 require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-token-factory.php';
 require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-token.php';
@@ -39,7 +40,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 	public function setUp(): void {
 		$this->sqlite = new PDO( 'sqlite::memory:' );
 
-		$this->engine = new WP_SQLite_Driver( $this->sqlite );
+		$this->engine = new WP_SQLite_Driver( 'wp', $this->sqlite );
 		$this->engine->query(
 			"CREATE TABLE _options (
 					ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
