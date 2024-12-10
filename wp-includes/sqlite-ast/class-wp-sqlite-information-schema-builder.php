@@ -221,7 +221,7 @@ class WP_SQLite_Information_Schema_Builder {
 		WP_MySQL_Lexer::SET_SYMBOL                => 'set',
 		WP_MySQL_Lexer::SERIAL_SYMBOL             => 'bigint',
 		WP_MySQL_Lexer::GEOMETRY_SYMBOL           => 'geometry',
-		WP_MySQL_Lexer::GEOMETRYCOLLECTION_SYMBOL => 'geometrycollection',
+		WP_MySQL_Lexer::GEOMETRYCOLLECTION_SYMBOL => 'geomcollection',
 		WP_MySQL_Lexer::POINT_SYMBOL              => 'point',
 		WP_MySQL_Lexer::MULTIPOINT_SYMBOL         => 'multipoint',
 		WP_MySQL_Lexer::LINESTRING_SYMBOL         => 'linestring',
@@ -229,6 +229,76 @@ class WP_SQLite_Information_Schema_Builder {
 		WP_MySQL_Lexer::POLYGON_SYMBOL            => 'polygon',
 		WP_MySQL_Lexer::MULTIPOLYGON_SYMBOL       => 'multipolygon',
 		WP_MySQL_Lexer::JSON_SYMBOL               => 'json',
+	);
+
+	/**
+	 * The default collation for each MySQL charset.
+	 */
+	const CHARSET_DEFAULT_COLLATION_MAP = array(
+		'armscii8' => 'armscii8_general_ci',
+		'ascii'    => 'ascii_general_ci',
+		'big5'     => 'big5_chinese_ci',
+		'binary'   => 'binary',
+		'cp1250'   => 'cp1250_general_ci',
+		'cp1251'   => 'cp1251_general_ci',
+		'cp1256'   => 'cp1256_general_ci',
+		'cp1257'   => 'cp1257_general_ci',
+		'cp850'    => 'cp850_general_ci',
+		'cp852'    => 'cp852_general_ci',
+		'cp866'    => 'cp866_general_ci',
+		'cp932'    => 'cp932_japanese_ci',
+		'dec8'     => 'dec8_swedish_ci',
+		'eucjpms'  => 'eucjpms_japanese_ci',
+		'euckr'    => 'euckr_korean_ci',
+		'gb18030'  => 'gb18030_chinese_ci',
+		'gb2312'   => 'gb2312_chinese_ci',
+		'gbk'      => 'gbk_chinese_ci',
+		'geostd8'  => 'geostd8_general_ci',
+		'greek'    => 'greek_general_ci',
+		'hebrew'   => 'hebrew_general_ci',
+		'hp8'      => 'hp8_english_ci',
+		'keybcs2'  => 'keybcs2_general_ci',
+		'koi8r'    => 'koi8r_general_ci',
+		'koi8u'    => 'koi8u_general_ci',
+		'latin1'   => 'latin1_swedish_ci',
+		'latin2'   => 'latin2_general_ci',
+		'latin5'   => 'latin5_turkish_ci',
+		'latin7'   => 'latin7_general_ci',
+		'macce'    => 'macce_general_ci',
+		'macroman' => 'macroman_general_ci',
+		'sjis'     => 'sjis_japanese_ci',
+		'swe7'     => 'swe7_swedish_ci',
+		'tis620'   => 'tis620_thai_ci',
+		'ucs2'     => 'ucs2_general_ci',
+		'ujis'     => 'ujis_japanese_ci',
+		'utf16'    => 'utf16_general_ci',
+		'utf16le'  => 'utf16le_general_ci',
+		'utf32'    => 'utf32_general_ci',
+		'utf8'     => 'utf8_general_ci',
+		'utf8mb4'  => 'utf8mb4_general_ci', // @TODO: From MySQL 8.0.1, this is utf8mb4_0900_ai_ci.
+	);
+
+	/**
+	 * Maximum number of bytes per character for each charset.
+	 *
+	 * The list includes only multi-byte charsets.
+	 */
+	const CHARSET_MAX_BYTES_MAP = array(
+		'big5'    => 2,
+		'cp932'   => 2,
+		'eucjpms' => 3,
+		'euckr'   => 2,
+		'gb18030' => 4,
+		'gb2312'  => 2,
+		'gbk'     => 2,
+		'sjis'    => 2,
+		'ucs2'    => 2,
+		'ujis'    => 3,
+		'utf16'   => 4,
+		'utf16le' => 4,
+		'utf32'   => 4,
+		'utf8'    => 3,
+		'utf8mb4' => 4,
 	);
 
 	/**
@@ -301,9 +371,9 @@ class WP_SQLite_Information_Schema_Builder {
 			$extra    = $this->get_column_extra( $column );
 
 			list ( $data_type, $column_type )    = $this->get_column_data_types( $column );
-			list ( $char_length, $octet_length ) = $this->get_column_lengths( $column, $data_type );
-			list ( $precision, $scale )          = $this->get_column_numeric_attributes( $column, $data_type );
 			list ( $charset, $collation )        = $this->get_column_charset_and_collation( $column, $data_type );
+			list ( $char_length, $octet_length ) = $this->get_column_lengths( $column, $data_type, $charset );
+			list ( $precision, $scale )          = $this->get_column_numeric_attributes( $column, $data_type );
 			$datetime_precision                  = $this->get_column_datetime_precision( $column, $data_type );
 			$generation_expression               = $this->get_column_generation_expression( $column );
 
@@ -461,6 +531,7 @@ class WP_SQLite_Information_Schema_Builder {
 		$collation = null;
 		$is_binary = false;
 
+		// Charset.
 		$charset_node = $node->get_descendant_node( 'charsetWithOptBinary' );
 		if ( null !== $charset_node ) {
 			$charset_name_node = $charset_node->get_child_node( 'charsetName' );
@@ -474,13 +545,30 @@ class WP_SQLite_Information_Schema_Builder {
 				// @TODO: This changes varchar to varbinary.
 			}
 
-			// @TODO: DEFAULT
+			// @TODO: "DEFAULT"
 
 			if ( $charset_node->has_child_token( WP_MySQL_Lexer::BINARY_SYMBOL ) ) {
 				$is_binary = true;
 			}
+		} else {
+			// National charsets (in MySQL, it's "utf8").
+			$data_type_node = $node->get_descendant_node( 'dataType' );
+			if (
+				$data_type_node->has_child_node( 'nchar' )
+				|| $data_type_node->has_child_token( WP_MySQL_Lexer::NCHAR_SYMBOL )
+				|| $data_type_node->has_child_token( WP_MySQL_Lexer::NATIONAL_SYMBOL )
+				|| $data_type_node->has_child_token( WP_MySQL_Lexer::NVARCHAR_SYMBOL )
+			) {
+				$charset = 'utf8';
+			}
 		}
 
+		// Normalize charset.
+		if ( 'utf8mb3' === $charset ) {
+			$charset = 'utf8';
+		}
+
+		// Collation.
 		$collation_node = $node->get_descendant_node( 'collationName' );
 		if ( null !== $collation_node ) {
 			$collation = strtolower( $this->get_value( $collation_node ) );
@@ -489,16 +577,20 @@ class WP_SQLite_Information_Schema_Builder {
 		// Defaults.
 		// @TODO: These are hardcoded now. We should get them from table/DB.
 		if ( null === $charset && null === $collation ) {
-			$charset   = 'utf8mb4';
-			$collation = 'utf8mb4_general_ci';
-
-			// @TODO: BINARY (seems to change varchar to varbinary).
-			// @TODO: DEFAULT
+			$charset = 'utf8mb4';
+			// @TODO: "BINARY" (seems to change varchar to varbinary).
+			// @TODO: "DEFAULT"
 		}
 
 		// If only one of charset/collation is set, the other one is derived.
 		if ( null === $collation ) {
-			$collation = $charset . ( $is_binary ? '_bin' : '_general_ci' );
+			if ( $is_binary ) {
+				$collation = $charset . '_bin';
+			} elseif ( isset( self::CHARSET_DEFAULT_COLLATION_MAP[ $charset ] ) ) {
+				$collation = self::CHARSET_DEFAULT_COLLATION_MAP[ $charset ];
+			} else {
+				$collation = $charset . '_general_ci';
+			}
 		} elseif ( null === $charset ) {
 			$charset = substr( $collation, 0, strpos( $collation, '_' ) );
 		}
@@ -558,7 +650,12 @@ class WP_SQLite_Information_Schema_Builder {
 		// Get full type.
 		$full_type = $type;
 		if ( 'enum' === $type || 'set' === $type ) {
-			$full_type .= $this->get_value( $type_node->get_descendant_node( 'stringList' ) );
+			$string_list = $type_node->get_descendant_node( 'stringList' );
+			$values      = $string_list->get_child_nodes( 'textString' );
+			foreach ( $values as $i => $value ) {
+				$values[ $i ] = "'" . str_replace( "'", "''", $this->get_value( $value ) ) . "'";
+			}
+			$full_type .= '(' . implode( ',', $values ) . ')';
 		}
 
 		$field_length = $type_node->get_descendant_node( 'fieldLength' );
@@ -595,9 +692,16 @@ class WP_SQLite_Information_Schema_Builder {
 			}
 		}
 
-		if ( $type_node->get_descendant_token( WP_MySQL_Lexer::UNSIGNED_SYMBOL ) ) {
+		// UNSIGNED.
+		// SERIAL is an alias for BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE.
+		if (
+			$type_node->get_descendant_token( WP_MySQL_Lexer::UNSIGNED_SYMBOL )
+			|| $type_node->get_descendant_token( WP_MySQL_Lexer::SERIAL_SYMBOL )
+		) {
 			$full_type .= ' unsigned';
 		}
+
+		// ZEROFILL.
 		if ( $type_node->get_descendant_token( WP_MySQL_Lexer::ZEROFILL_SYMBOL ) ) {
 			$full_type .= ' zerofill';
 		}
@@ -625,6 +729,12 @@ class WP_SQLite_Information_Schema_Builder {
 			return 'NO';
 		}
 
+		// SERIAL is an alias for BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE.
+		$data_type = $node->get_descendant_node( 'dataType' );
+		if ( null !== $data_type->get_descendant_token( WP_MySQL_Lexer::SERIAL_SYMBOL ) ) {
+			return 'NO';
+		}
+
 		foreach ( $node->get_descendant_nodes( 'columnAttribute' ) as $attr ) {
 			// PRIMARY KEY columns are always NOT NULL.
 			if ( $attr->has_child_token( WP_MySQL_Lexer::KEY_SYMBOL ) ) {
@@ -647,7 +757,15 @@ class WP_SQLite_Information_Schema_Builder {
 		WP_Parser_Node $column_node
 	): string {
 		// 1. PRI: Column is a primary key or its any component.
-		if ( null !== $column_node->get_descendant_token( WP_MySQL_Lexer::PRIMARY_SYMBOL ) ) {
+		if (
+			null !== $column_node->get_descendant_token( WP_MySQL_Lexer::PRIMARY_SYMBOL )
+		) {
+			return 'PRI';
+		}
+
+		// SERIAL is an alias for BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE.
+		$data_type = $column_node->get_descendant_node( 'dataType' );
+		if ( null !== $data_type->get_descendant_token( WP_MySQL_Lexer::SERIAL_SYMBOL ) ) {
 			return 'PRI';
 		}
 
@@ -703,24 +821,24 @@ class WP_SQLite_Information_Schema_Builder {
 		return '';
 	}
 
-	private function get_column_lengths( WP_Parser_Node $node, string $column_type ): array {
+	private function get_column_lengths( WP_Parser_Node $node, string $data_type, ?string $charset ): array {
 		// Text and blob types.
-		if ( 'tinytext' === $column_type || 'tinyblob' === $column_type ) {
+		if ( 'tinytext' === $data_type || 'tinyblob' === $data_type ) {
 			return array( 255, 255 );
-		} elseif ( 'text' === $column_type || 'blob' === $column_type ) {
+		} elseif ( 'text' === $data_type || 'blob' === $data_type ) {
 			return array( 65535, 65535 );
-		} elseif ( 'mediumtext' === $column_type || 'mediumblob' === $column_type ) {
+		} elseif ( 'mediumtext' === $data_type || 'mediumblob' === $data_type ) {
 			return array( 16777215, 16777215 );
-		} elseif ( 'longtext' === $column_type || 'longblob' === $column_type ) {
+		} elseif ( 'longtext' === $data_type || 'longblob' === $data_type ) {
 			return array( 4294967295, 4294967295 );
 		}
 
 		// For CHAR, VARCHAR, BINARY, VARBINARY, we need to check the field length.
 		if (
-			'char' === $column_type
-			|| 'binary' === $column_type
-			|| 'varchar' === $column_type
-			|| 'varbinary' === $column_type
+			'char' === $data_type
+			|| 'binary' === $data_type
+			|| 'varchar' === $data_type
+			|| 'varbinary' === $data_type
 		) {
 			$field_length = $node->get_descendant_node( 'fieldLength' );
 			if ( null === $field_length ) {
@@ -729,13 +847,24 @@ class WP_SQLite_Information_Schema_Builder {
 				$length = (int) trim( $this->get_value( $field_length ), '()' );
 			}
 
-			if ( 'char' === $column_type || 'varchar' === $column_type ) {
-				// @TODO: The second number probably depends on the charset.
-				//        We also need to handle NCHAR, NVARCHAR, etc.
-				return array( $length, 4 * $length );
+			if ( 'char' === $data_type || 'varchar' === $data_type ) {
+				$max_bytes_per_char = self::CHARSET_MAX_BYTES_MAP[ $charset ] ?? 1;
+				return array( $length, $max_bytes_per_char * $length );
 			} else {
 				return array( $length, $length );
 			}
+		}
+
+		// For ENUM and SET, we need to check the longest value.
+		if ( 'enum' === $data_type || 'set' === $data_type ) {
+			$string_list = $node->get_descendant_node( 'stringList' );
+			$values      = $string_list->get_child_nodes( 'textString' );
+			$length      = 0;
+			foreach ( $values as $value ) {
+				$length = max( $length, strlen( $this->get_value( $value ) ) );
+			}
+			$max_bytes_per_char = self::CHARSET_MAX_BYTES_MAP[ $charset ] ?? 1;
+			return array( $length, $max_bytes_per_char * $length );
 		}
 
 		return array( null, null );
@@ -754,6 +883,13 @@ class WP_SQLite_Information_Schema_Builder {
 			if ( null !== $node->get_descendant_token( WP_MySQL_Lexer::UNSIGNED_SYMBOL ) ) {
 				return array( 20, 0 );
 			}
+
+			// SERIAL is an alias for BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE.
+			$data_type = $node->get_descendant_node( 'dataType' );
+			if ( null !== $data_type->get_descendant_token( WP_MySQL_Lexer::SERIAL_SYMBOL ) ) {
+				return array( 20, 0 );
+			}
+
 			return array( 19, 0 );
 		}
 
@@ -808,6 +944,13 @@ class WP_SQLite_Information_Schema_Builder {
 
 	private function get_column_extra( WP_Parser_Node $node ): string {
 		$extra = '';
+
+		// SERIAL
+		$data_type = $node->get_descendant_node( 'dataType' );
+		if ( null !== $data_type->get_descendant_token( WP_MySQL_Lexer::SERIAL_SYMBOL ) ) {
+			return 'auto_increment';
+		}
+
 		foreach ( $node->get_descendant_nodes( 'columnAttribute' ) as $attr ) {
 			if ( $attr->has_child_token( WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL ) ) {
 				return 'auto_increment';
@@ -847,7 +990,7 @@ class WP_SQLite_Information_Schema_Builder {
 
 	private function is_spatial_data_type( string $data_type ): bool {
 		return 'geometry' === $data_type
-			|| 'geometrycollection' === $data_type
+			|| 'geomcollection' === $data_type
 			|| 'point' === $data_type
 			|| 'multipoint' === $data_type
 			|| 'linestring' === $data_type

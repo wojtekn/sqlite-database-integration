@@ -580,12 +580,40 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			'CREATE TABLE "t" ( "c1" TEXT , "c2" TEXT , "c3" TEXT )',
 			'CREATE TABLE t (c1 VARCHAR(255), c2 CHAR VARYING(255), c3 CHARACTER VARYING(255))'
 		);
+
+		$this->assertExecutedInformationSchemaQueries(
+			array(
+				'INSERT INTO _mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'c1', 1, null, 'YES', 'varchar', 255, 1020, null, null, null, 'utf8mb4', 'utf8mb4_general_ci', 'varchar(255)', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'c2', 2, null, 'YES', 'varchar', 255, 1020, null, null, null, 'utf8mb4', 'utf8mb4_general_ci', 'varchar(255)', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'c3', 3, null, 'YES', 'varchar', 255, 1020, null, null, null, 'utf8mb4', 'utf8mb4_general_ci', 'varchar(255)', '', '', 'select,insert,update,references', '', '', null)",
+			)
+		);
 	}
 
 	public function testNationalCharDataTypes(): void {
 		$this->assertQuery(
-			'CREATE TABLE "t" ( "c1" TEXT , "c2" TEXT )',
-			'CREATE TABLE t (c1 NATIONAL CHAR, c2 NCHAR)'
+			'CREATE TABLE "t" ( "c1" TEXT , "c2" TEXT , "c3" TEXT , "c4" TEXT )',
+			'CREATE TABLE t (c1 NATIONAL CHAR, c2 NCHAR, c3 NATIONAL CHAR (10), c4 NCHAR(10))'
+		);
+
+		$this->assertExecutedInformationSchemaQueries(
+			array(
+				'INSERT INTO _mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'c1', 1, null, 'YES', 'char', 1, 3, null, null, null, 'utf8', 'utf8_general_ci', 'char(1)', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'c2', 2, null, 'YES', 'char', 1, 3, null, null, null, 'utf8', 'utf8_general_ci', 'char(1)', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'c3', 3, null, 'YES', 'char', 10, 30, null, null, null, 'utf8', 'utf8_general_ci', 'char(10)', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'c4', 4, null, 'YES', 'char', 10, 30, null, null, null, 'utf8', 'utf8_general_ci', 'char(10)', '', '', 'select,insert,update,references', '', '', null)",
+			)
 		);
 	}
 
@@ -594,12 +622,38 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			'CREATE TABLE "t" ( "c1" TEXT , "c2" TEXT , "c3" TEXT )',
 			'CREATE TABLE t (c1 NCHAR VARCHAR(255), c2 NCHAR VARYING(255), c3 NVARCHAR(255))'
 		);
+
+		$this->assertExecutedInformationSchemaQueries(
+			array(
+				'INSERT INTO _mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'c1', 1, null, 'YES', 'varchar', 255, 765, null, null, null, 'utf8', 'utf8_general_ci', 'varchar(255)', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'c2', 2, null, 'YES', 'varchar', 255, 765, null, null, null, 'utf8', 'utf8_general_ci', 'varchar(255)', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'c3', 3, null, 'YES', 'varchar', 255, 765, null, null, null, 'utf8', 'utf8_general_ci', 'varchar(255)', '', '', 'select,insert,update,references', '', '', null)",
+			)
+		);
 	}
 
 	public function testNationalVarcharDataTypes(): void {
 		$this->assertQuery(
 			'CREATE TABLE "t" ( "c1" TEXT , "c2" TEXT , "c3" TEXT )',
 			'CREATE TABLE t (c1 NATIONAL VARCHAR(255), c2 NATIONAL CHAR VARYING(255), c3 NATIONAL CHARACTER VARYING(255))'
+		);
+
+		$this->assertExecutedInformationSchemaQueries(
+			array(
+				'INSERT INTO _mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'c1', 1, null, 'YES', 'varchar', 255, 765, null, null, null, 'utf8', 'utf8_general_ci', 'varchar(255)', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'c2', 2, null, 'YES', 'varchar', 255, 765, null, null, null, 'utf8', 'utf8_general_ci', 'varchar(255)', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'c3', 3, null, 'YES', 'varchar', 255, 765, null, null, null, 'utf8', 'utf8_general_ci', 'varchar(255)', '', '', 'select,insert,update,references', '', '', null)",
+			)
 		);
 	}
 
@@ -608,12 +662,36 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			'CREATE TABLE "t" ( "t1" TEXT , "t2" TEXT , "t3" TEXT , "t4" TEXT )',
 			'CREATE TABLE t (t1 TINYTEXT, t2 TEXT, t3 MEDIUMTEXT, t4 LONGTEXT)'
 		);
+
+		$this->assertExecutedInformationSchemaQueries(
+			array(
+				'INSERT INTO _mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 't1', 1, null, 'YES', 'tinytext', 255, 255, null, null, null, 'utf8mb4', 'utf8mb4_general_ci', 'tinytext', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 't2', 2, null, 'YES', 'text', 65535, 65535, null, null, null, 'utf8mb4', 'utf8mb4_general_ci', 'text', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 't3', 3, null, 'YES', 'mediumtext', 16777215, 16777215, null, null, null, 'utf8mb4', 'utf8mb4_general_ci', 'mediumtext', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 't4', 4, null, 'YES', 'longtext', 4294967295, 4294967295, null, null, null, 'utf8mb4', 'utf8mb4_general_ci', 'longtext', '', '', 'select,insert,update,references', '', '', null)",
+			)
+		);
 	}
 
 	public function testEnumDataTypes(): void {
 		$this->assertQuery(
 			'CREATE TABLE "t" ( "e" TEXT )',
 			'CREATE TABLE t (e ENUM("a", "b", "c"))'
+		);
+
+		$this->assertExecutedInformationSchemaQueries(
+			array(
+				'INSERT INTO _mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'e', 1, null, 'YES', 'enum', 1, 4, null, null, null, 'utf8mb4', 'utf8mb4_general_ci', 'enum(''a'',''b'',''c'')', '', '', 'select,insert,update,references', '', '', null)",
+			)
 		);
 	}
 
@@ -622,12 +700,40 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			'CREATE TABLE "t" ( "d" TEXT , "t" TEXT , "dt" TEXT , "ts" TEXT , "y" TEXT )',
 			'CREATE TABLE t (d DATE, t TIME, dt DATETIME, ts TIMESTAMP, y YEAR)'
 		);
+
+		$this->assertExecutedInformationSchemaQueries(
+			array(
+				'INSERT INTO _mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'd', 1, null, 'YES', 'date', null, null, null, null, null, null, null, 'date', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 't', 2, null, 'YES', 'time', null, null, null, null, 0, null, null, 'time', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'dt', 3, null, 'YES', 'datetime', null, null, null, null, 0, null, null, 'datetime', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'ts', 4, null, 'YES', 'timestamp', null, null, null, null, 0, null, null, 'timestamp', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'y', 5, null, 'YES', 'year', null, null, null, null, null, null, null, 'year', '', '', 'select,insert,update,references', '', '', null)",
+			)
+		);
 	}
 
 	public function testBinaryDataTypes(): void {
 		$this->assertQuery(
 			'CREATE TABLE "t" ( "b" INTEGER , "v" BLOB )',
 			'CREATE TABLE t (b BINARY, v VARBINARY(255))'
+		);
+
+		$this->assertExecutedInformationSchemaQueries(
+			array(
+				'INSERT INTO _mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'b', 1, null, 'YES', 'binary', 1, 1, null, null, null, null, null, 'binary(1)', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'v', 2, null, 'YES', 'varbinary', 255, 255, null, null, null, null, null, 'varbinary(255)', '', '', 'select,insert,update,references', '', '', null)",
+			)
 		);
 	}
 
@@ -636,12 +742,42 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			'CREATE TABLE "t" ( "b1" BLOB , "b2" BLOB , "b3" BLOB , "b4" BLOB )',
 			'CREATE TABLE t (b1 TINYBLOB, b2 BLOB, b3 MEDIUMBLOB, b4 LONGBLOB)'
 		);
+
+		$this->assertExecutedInformationSchemaQueries(
+			array(
+				'INSERT INTO _mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'b1', 1, null, 'YES', 'tinyblob', 255, 255, null, null, null, null, null, 'tinyblob', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'b2', 2, null, 'YES', 'blob', 65535, 65535, null, null, null, null, null, 'blob', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'b3', 3, null, 'YES', 'mediumblob', 16777215, 16777215, null, null, null, null, null, 'mediumblob', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'b4', 4, null, 'YES', 'longblob', 4294967295, 4294967295, null, null, null, null, null, 'longblob', '', '', 'select,insert,update,references', '', '', null)",
+			)
+		);
 	}
 
 	public function testBasicSpatialDataTypes(): void {
 		$this->assertQuery(
 			'CREATE TABLE "t" ( "g1" TEXT , "g2" TEXT , "g3" TEXT , "g4" TEXT )',
 			'CREATE TABLE t (g1 GEOMETRY, g2 POINT, g3 LINESTRING, g4 POLYGON)'
+		);
+
+		$this->assertExecutedInformationSchemaQueries(
+			array(
+				'INSERT INTO _mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'g1', 1, null, 'YES', 'geometry', null, null, null, null, null, null, null, 'geometry', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'g2', 2, null, 'YES', 'point', null, null, null, null, null, null, null, 'point', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'g3', 3, null, 'YES', 'linestring', null, null, null, null, null, null, null, 'linestring', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'g4', 4, null, 'YES', 'polygon', null, null, null, null, null, null, null, 'polygon', '', '', 'select,insert,update,references', '', '', null)",
+			)
 		);
 	}
 
@@ -650,6 +786,19 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			'CREATE TABLE "t" ( "g1" TEXT , "g2" TEXT , "g3" TEXT )',
 			'CREATE TABLE t (g1 MULTIPOINT, g2 MULTILINESTRING, g3 MULTIPOLYGON)'
 		);
+
+		$this->assertExecutedInformationSchemaQueries(
+			array(
+				'INSERT INTO _mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'g1', 1, null, 'YES', 'multipoint', null, null, null, null, null, null, null, 'multipoint', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'g2', 2, null, 'YES', 'multilinestring', null, null, null, null, null, null, null, 'multilinestring', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'g3', 3, null, 'YES', 'multipolygon', null, null, null, null, null, null, null, 'multipolygon', '', '', 'select,insert,update,references', '', '', null)",
+			)
+		);
 	}
 
 	public function testGeometryCollectionDataTypes(): void {
@@ -657,12 +806,32 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			'CREATE TABLE "t" ( "g1" TEXT , "g2" TEXT )',
 			'CREATE TABLE t (g1 GEOMCOLLECTION, g2 GEOMETRYCOLLECTION)'
 		);
+
+		$this->assertExecutedInformationSchemaQueries(
+			array(
+				'INSERT INTO _mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'g1', 1, null, 'YES', 'geomcollection', null, null, null, null, null, null, null, 'geomcollection', '', '', 'select,insert,update,references', '', '', null)",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'g2', 2, null, 'YES', 'geomcollection', null, null, null, null, null, null, null, 'geomcollection', '', '', 'select,insert,update,references', '', '', null)",
+			)
+		);
 	}
 
 	public function testSerialDataTypes(): void {
 		$this->assertQuery(
 			'CREATE TABLE "t" ( "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT UNIQUE )',
 			'CREATE TABLE t (id SERIAL)'
+		);
+
+		$this->assertExecutedInformationSchemaQueries(
+			array(
+				'INSERT INTO _mysql_information_schema_tables (table_schema, table_name, table_type, engine, row_format, table_collation)'
+					. " VALUES ('wp', 't', 'BASE TABLE', 'InnoDB', 'DYNAMIC', 'utf8mb4_general_ci')",
+				'INSERT INTO _mysql_information_schema_columns (table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_scale, datetime_precision, character_set_name, collation_name, column_type, column_key, extra, privileges, column_comment, generation_expression, srs_id)'
+					. " VALUES ('wp', 't', 'id', 1, null, 'NO', 'bigint', null, null, 20, 0, null, null, null, 'bigint unsigned', 'PRI', 'auto_increment', 'select,insert,update,references', '', '', null)",
+			)
 		);
 	}
 
