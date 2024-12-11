@@ -292,14 +292,14 @@ class WP_SQLite_Translator_Tests extends TestCase {
 
 	public function testShowCreateTableWithEmptyDatetimeDefault() {
 		$this->assertQuery(
-			"CREATE TABLE _tmp_table (
+			'CREATE TABLE _tmp_table (
 				ID BIGINT PRIMARY KEY AUTO_INCREMENT,
 				timestamp1 datetime NOT NULL,
 				timestamp2 date NOT NULL,
 				timestamp3 time NOT NULL,
 				timestamp4 timestamp NOT NULL,
 				timestamp5 year NOT NULL
-			);"
+			);'
 		);
 
 		$this->assertQuery(
@@ -308,7 +308,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$results = $this->engine->get_query_results();
 
 		$this->assertEquals(
-			"CREATE TABLE `_tmp_table` (
+			'CREATE TABLE `_tmp_table` (
 	`ID` bigint AUTO_INCREMENT,
 	`timestamp1` datetime NOT NULL,
 	`timestamp2` date NOT NULL,
@@ -316,7 +316,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 	`timestamp4` timestamp NOT NULL,
 	`timestamp5` year NOT NULL,
 	PRIMARY KEY (`ID`)
-);",
+);',
 			$results[0]->{'Create Table'}
 		);
 	}
