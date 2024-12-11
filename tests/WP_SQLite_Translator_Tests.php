@@ -290,6 +290,28 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 	}
 
+	public function testShowCreateTableWithEmptyDatetimeDefault() {
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+				ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
+				created_at datetime NOT NULL 
+			);"
+		);
+
+		$this->assertQuery(
+			'SHOW CREATE TABLE _tmp_table;'
+		);
+		$results = $this->engine->get_query_results();
+
+		$this->assertEquals(
+			"CREATE TABLE _tmp_table (
+	`ID` bigint PRIMARY KEY AUTO_INCREMENT NOT NULL,
+	`created_at` datetime NOT NULL 
+);",
+			$results[0]->{'Create Table'}
+		);
+	}
+
 	public function testShowCreateTableQuoted() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
