@@ -294,7 +294,11 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
 				ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
-				created_at datetime NOT NULL
+				timestamp1 datetime NOT NULL,
+				timestamp2 date NOT NULL,
+				timestamp3 time NOT NULL,
+				timestamp4 timestamp NOT NULL,
+				timestamp5 year NOT NULL
 			);"
 		);
 
@@ -306,7 +310,11 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertEquals(
 			"CREATE TABLE _tmp_table (
 	`ID` bigint PRIMARY KEY AUTO_INCREMENT NOT NULL,
-	`created_at` datetime NOT NULL
+	`timestamp1` datetime NOT NULL,
+	`timestamp2` date NOT NULL,
+	`timestamp3` time NOT NULL,
+	`timestamp4` timestamp NOT NULL,
+	`timestamp5` year NOT NULL
 );",
 			$results[0]->{'Create Table'}
 		);
