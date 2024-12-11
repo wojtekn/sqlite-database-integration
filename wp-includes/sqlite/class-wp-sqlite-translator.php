@@ -3693,16 +3693,17 @@ class WP_SQLite_Translator {
 		$auto_increment_column = $this->get_autoincrement_column( $table_name );
 		$column_definitions    = array();
 		foreach ( $columns as $column ) {
+			$mysql_type = $this->get_cached_mysql_data_type( $table_name, $column->name );
 			$is_auto_incr = $auto_increment_column && strtolower( $auto_increment_column ) === strtolower( $column->name );
 			$definition   = array();
 			$definition[] = '`' . $column->name . '`';
-			$definition[] = $this->get_cached_mysql_data_type( $table_name, $column->name ) ?? $column->name;
+			$definition[] = $mysql_type ?? $column->name;
 
 			if ( '1' === $column->notnull ) {
 				$definition[] = 'NOT NULL';
 			}
 
-			if ( null !== $column->dflt_value && '' !== $column->dflt_value && ! $is_auto_incr ) {
+			if ( $this->column_has_default( $column, $mysql_type ) && ! $is_auto_incr ) {
 				$definition[] = 'DEFAULT ' . $column->dflt_value;
 			}
 
@@ -3856,6 +3857,22 @@ class WP_SQLite_Translator {
 			},
 			$this->get_table_columns( $table_name )
 		);
+	}
+
+	/**
+	 * Checks if column should define the default.
+	 *
+	 * @param stdClass $column The table column
+	 * @param string $mysql_type The MySQL data type
+	 *
+	 * @return boolean If column should have a default definition.
+	 */
+	private function column_has_default( $column, $mysql_type )  {
+		if ( null !== $column->dflt_value && '' !== $column->dflt_value && ! in_array( strtolower( $mysql_type ), array( 'datetime', 'date', 'time', 'timestamp', 'year' ), true ) ) {
+			return true;
+		}
+
+		return false;
 	}
 
 	/**
