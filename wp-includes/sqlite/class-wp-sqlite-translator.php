@@ -3693,7 +3693,7 @@ class WP_SQLite_Translator {
 		$auto_increment_column = $this->get_autoincrement_column( $table_name );
 		$column_definitions    = array();
 		foreach ( $columns as $column ) {
-			$mysql_type = $this->get_cached_mysql_data_type( $table_name, $column->name );
+			$mysql_type   = $this->get_cached_mysql_data_type( $table_name, $column->name );
 			$is_auto_incr = $auto_increment_column && strtolower( $auto_increment_column ) === strtolower( $column->name );
 			$definition   = array();
 			$definition[] = '`' . $column->name . '`';
@@ -3867,7 +3867,7 @@ class WP_SQLite_Translator {
 	 *
 	 * @return boolean If column should have a default definition.
 	 */
-	private function column_has_default( $column, $mysql_type )  {
+	private function column_has_default( $column, $mysql_type ) {
 		if ( null !== $column->dflt_value && '' !== $column->dflt_value && ! in_array( strtolower( $mysql_type ), array( 'datetime', 'date', 'time', 'timestamp', 'year' ), true ) ) {
 			return true;
 		}
