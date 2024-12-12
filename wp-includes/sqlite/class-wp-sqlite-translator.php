@@ -3726,7 +3726,7 @@ class WP_SQLite_Translator {
 	 */
 	private function get_key_definitions( $table_name, $columns ) {
 		$key_length_limit = 100;
-		$key_definitions = array();
+		$key_definitions  = array();
 
 		$pks = array();
 		foreach ( $columns as $column ) {
