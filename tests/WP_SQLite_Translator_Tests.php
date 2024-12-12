@@ -267,8 +267,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 				ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
 				option_name VARCHAR(255) default '',
 				option_value TEXT NOT NULL,
-				UNIQUE KEY option_name (option_name),
-				KEY composite (option_name, option_value)
+				UNIQUE KEY option_name (option_name(100)),
+				KEY composite (option_name(100), option_value(100))
 			);"
 		);
 
@@ -283,8 +283,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 	`option_name` varchar(255) DEFAULT '',
 	`option_value` text NOT NULL DEFAULT '',
 	PRIMARY KEY (`ID`),
-	KEY `composite` (`option_name`, `option_value`),
-	UNIQUE KEY `option_name` (`option_name`)
+	KEY `composite` (`option_name`(100), `option_value`(100)),
+	UNIQUE KEY `option_name` (`option_name`(100))
 );",
 			$results[0]->{'Create Table'}
 		);
@@ -337,8 +337,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 				ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
 				option_name VARCHAR(255) default '',
 				option_value TEXT NOT NULL,
-				UNIQUE KEY option_name (option_name),
-				KEY composite (option_name, option_value)
+				UNIQUE KEY option_name (option_name(100)),
+				KEY composite (option_name, option_value(100))
 			);"
 		);
 
@@ -353,8 +353,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 	`option_name` varchar(255) DEFAULT '',
 	`option_value` text NOT NULL DEFAULT '',
 	PRIMARY KEY (`ID`),
-	KEY `composite` (`option_name`, `option_value`),
-	UNIQUE KEY `option_name` (`option_name`)
+	KEY `composite` (`option_name`(100), `option_value`(100)),
+	UNIQUE KEY `option_name` (`option_name`(100))
 );",
 			$results[0]->{'Create Table'}
 		);
@@ -418,8 +418,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 					ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
 					option_name VARCHAR(255) default '',
 					option_value TEXT NOT NULL,
-					KEY `option_name` (`option_name`),
-					KEY `double__underscores` (`option_name`, `ID`)
+					KEY `option_name` (`option_name`(100)),
+					KEY `double__underscores` (`option_name`(100), `ID`)
 				);"
 		);
 
@@ -428,8 +428,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 					ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
 					option_name VARCHAR(255) default '',
 					option_value TEXT NOT NULL,
-					KEY `option_name` (`option_name`),
-					KEY `double__underscores` (`option_name`, `ID`)
+					KEY `option_name` (`option_name`(100)),
+					KEY `double__underscores` (`option_name`(100), `ID`)
 				);"
 		);
 	}
@@ -440,8 +440,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 					ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
 					option_name VARCHAR(255) default '',
 					option_value TEXT NOT NULL,
-					KEY `option_name` (`option_name`),
-					KEY `double__underscores` (`option_name`, `ID`)
+					KEY `option_name` (`option_name`(100)),
+					KEY `double__underscores` (`option_name`(100), `ID`)
 				);"
 		);
 
@@ -455,8 +455,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 	`option_name` varchar(255) DEFAULT \'\',
 	`option_value` text NOT NULL DEFAULT \'\',
 	PRIMARY KEY (`ID`),
-	KEY `double__underscores` (`option_name`, `ID`),
-	KEY `option_name` (`option_name`)
+	KEY `double__underscores` (`option_name`(100), `ID`),
+	KEY `option_name` (`option_name`(100))
 );',
 			$results[0]->{'Create Table'}
 		);
@@ -486,8 +486,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 	`meta_key` varchar(255) DEFAULT NULL,
 	`meta_value` text DEFAULT NULL,
 	PRIMARY KEY (`id`),
-	KEY `order_id_meta_key_meta_value` (`order_id`,`meta_key`(100),`meta_value`(82)),
-	KEY `meta_key_value` (`meta_key`(100),`meta_value`(82))
+	KEY `order_id_meta_key_meta_value` (`order_id`, `meta_key`(100), `meta_value`(100)),
+	KEY `meta_key_value` (`meta_key`(100), `meta_value`(100))
 );',
 			$results[0]->{'Create Table'}
 		);
