@@ -464,7 +464,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 
 	public function testShowCreateTableLimitsKeyLengths() {
 		$this->assertQuery(
-			"CREATE TABLE _tmp__table (
+			'CREATE TABLE _tmp__table (
 					`id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 					`order_id` bigint(20) unsigned DEFAULT NULL,
 					`meta_key` varchar(255) DEFAULT NULL,
@@ -472,7 +472,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 					PRIMARY KEY (`id`),
 					KEY `meta_key_value` (`meta_key`(100),`meta_value`(82)),
 					KEY `order_id_meta_key_meta_value` (`order_id`,`meta_key`(100),`meta_value`(82))
-				);"
+				);'
 		);
 
 		$this->assertQuery(
