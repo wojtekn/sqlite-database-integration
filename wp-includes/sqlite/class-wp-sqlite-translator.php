@@ -3725,6 +3725,7 @@ class WP_SQLite_Translator {
 	 * @return array An array of key definitions
 	 */
 	private function get_key_definitions( $table_name, $columns ) {
+		$key_length_limit = 100;
 		$key_definitions = array();
 
 		$pks = array();
@@ -3756,7 +3757,11 @@ class WP_SQLite_Translator {
 			$key_definition[] = sprintf( '`%s`', $index_name );
 
 			$cols = array_map(
-				function ( $column ) {
+				function ( $column ) use ( $table_name, $key_length_limit ) {
+					$data_type = strtolower( $this->get_cached_mysql_data_type( $table_name, $column['name'] ) );
+					if ( 'text' === $data_type || str_starts_with( $data_type, 'varchar' ) ) {
+						return sprintf( '`%s`(%s)', $column['name'], $key_length_limit );
+					}
 					return sprintf( '`%s`', $column['name'] );
 				},
 				$key['columns']
