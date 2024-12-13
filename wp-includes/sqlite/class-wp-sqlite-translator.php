@@ -3758,12 +3758,12 @@ class WP_SQLite_Translator {
 
 			$cols = array_map(
 				function ( $column ) use ( $table_name, $key_length_limit ) {
-					$data_type = strtolower( $this->get_cached_mysql_data_type( $table_name, $column['name'] ) );
+					$data_type   = strtolower( $this->get_cached_mysql_data_type( $table_name, $column['name'] ) );
 					$data_length = $key_length_limit;
 
 					// Extract the length from the data type. Make it lower if needed.
 					if ( 1 === preg_match( '/^(\w+)\((\d+)\)$/', $data_type, $matches ) ) {
-						$data_type = $matches[1]; // "varchar"
+						$data_type   = $matches[1]; // "varchar"
 						$data_length = min( $matches[2], $key_length_limit ); // "255"
 					}
 
