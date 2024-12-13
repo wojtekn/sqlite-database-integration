@@ -467,10 +467,10 @@ class WP_SQLite_Translator_Tests extends TestCase {
 			'CREATE TABLE _tmp__table (
 					`id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 					`order_id` bigint(20) unsigned DEFAULT NULL,
-					`meta_key` varchar(255) DEFAULT NULL,
+					`meta_key` varchar(20) DEFAULT NULL,
 					`meta_value` text DEFAULT NULL,
 					PRIMARY KEY (`id`),
-					KEY `meta_key_value` (`meta_key`(100),`meta_value`(82)),
+					KEY `meta_key_value` (`meta_key`(20),`meta_value`(82)),
 					KEY `order_id_meta_key_meta_value` (`order_id`,`meta_key`(100),`meta_value`(82))
 				);'
 		);
@@ -483,11 +483,11 @@ class WP_SQLite_Translator_Tests extends TestCase {
 			'CREATE TABLE `_tmp__table` (
 	`id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 	`order_id` bigint(20) unsigned DEFAULT NULL,
-	`meta_key` varchar(255) DEFAULT NULL,
+	`meta_key` varchar(20) DEFAULT NULL,
 	`meta_value` text DEFAULT NULL,
 	PRIMARY KEY (`id`),
-	KEY `order_id_meta_key_meta_value` (`order_id`, `meta_key`(100), `meta_value`(100)),
-	KEY `meta_key_value` (`meta_key`(100), `meta_value`(100))
+	KEY `order_id_meta_key_meta_value` (`order_id`, `meta_key`(20), `meta_value`(100)),
+	KEY `meta_key_value` (`meta_key`(20), `meta_value`(100))
 );',
 			$results[0]->{'Create Table'}
 		);
