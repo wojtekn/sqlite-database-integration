@@ -3868,11 +3868,22 @@ class WP_SQLite_Translator {
 	 * @return boolean If column should have a default definition.
 	 */
 	private function column_has_default( $column, $mysql_type ) {
-		if ( null !== $column->dflt_value && '' !== $column->dflt_value && ! in_array( strtolower( $mysql_type ), array( 'datetime', 'date', 'time', 'timestamp', 'year' ), true ) ) {
-			return true;
+		if ( null === $column->dflt_value ) {
+			return false;
 		}
 
-		return false;
+		if ( '' === $column->dflt_value ) {
+			return false;
+		}
+
+		if (
+			in_array( strtolower( $mysql_type ), array( 'datetime', 'date', 'time', 'timestamp', 'year' ), true ) &&
+			"''" === $column->dflt_value
+		) {
+			return false;
+		}
+
+		return true;
 	}
 
 	/**
