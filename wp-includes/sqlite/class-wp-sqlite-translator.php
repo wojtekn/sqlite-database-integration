@@ -3768,7 +3768,7 @@ class WP_SQLite_Translator {
 					}
 
 					// Set the data length to the varchar and text key length
-					if ( in_array( $this->field_types_translation[ $data_type ], [ 'text', 'blob'] ) ) {
+					if ( in_array( $this->field_types_translation[ $data_type ], [ 'text', 'blob'], true ) ) {
 						return sprintf( '`%s`(%s)', $column['name'], $data_length );
 					}
 					return sprintf( '`%s`', $column['name'] );
