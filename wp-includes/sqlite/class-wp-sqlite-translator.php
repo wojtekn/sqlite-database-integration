@@ -3761,14 +3761,14 @@ class WP_SQLite_Translator {
 					$data_type   = strtolower( $this->get_cached_mysql_data_type( $table_name, $column['name'] ) );
 					$data_length = $key_length_limit;
 
-					// Extract the length from the data type. Make it lower if needed.
-					if ( 1 === preg_match( '/^(\w+)\((\d+)\)$/', $data_type, $matches ) ) {
+					// Extract the length from the data type. Make it lower if needed. Skip 'unsigned' parts and whitespace.
+					if ( 1 === preg_match( '/^(\w+)\s*\(\s*(\d+)\s*\)\s*(.*)?$/', $data_type, $matches ) ) {
 						$data_type   = $matches[1]; // "varchar"
 						$data_length = min( $matches[2], $key_length_limit ); // "255"
 					}
 
 					// Set the data length to the varchar and text key length
-					if ( 'text' === $data_type || str_starts_with( $data_type, 'varchar' ) ) {
+					if ( in_array( $this->field_types_translation[ $data_type ], [ 'text', 'blob'] ) ) {
 						return sprintf( '`%s`(%s)', $column['name'], $data_length );
 					}
 					return sprintf( '`%s`', $column['name'] );
