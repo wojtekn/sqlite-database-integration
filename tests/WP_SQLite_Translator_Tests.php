@@ -290,6 +290,47 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 	}
 
+	public function testShowCreateTableWithEmptyDatetimeDefault() {
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+				ID BIGINT PRIMARY KEY AUTO_INCREMENT,
+				timestamp1 datetime NOT NULL,
+				timestamp2 date NOT NULL,
+				timestamp3 time NOT NULL,
+				timestamp4 timestamp NOT NULL,
+				timestamp5 year NOT NULL,
+				notempty1 datetime DEFAULT '1999-12-12 12:12:12',
+				notempty2 date DEFAULT '1999-12-12',
+				notempty3 time DEFAULT '12:12:12',
+				notempty4 year DEFAULT '2024',
+				notempty5 timestamp DEFAULT '1734539165',
+			);"
+		);
+
+		$this->assertQuery(
+			'SHOW CREATE TABLE _tmp_table;'
+		);
+		$results = $this->engine->get_query_results();
+
+		$this->assertEquals(
+			"CREATE TABLE `_tmp_table` (
+	`ID` bigint AUTO_INCREMENT,
+	`timestamp1` datetime NOT NULL,
+	`timestamp2` date NOT NULL,
+	`timestamp3` time NOT NULL,
+	`timestamp4` timestamp NOT NULL,
+	`timestamp5` year NOT NULL,
+	`notempty1` datetime DEFAULT '1999-12-12 12:12:12',
+	`notempty2` date DEFAULT '1999-12-12',
+	`notempty3` time DEFAULT '12:12:12',
+	`notempty4` year DEFAULT '2024',
+	`notempty5` timestamp DEFAULT '1734539165',
+	PRIMARY KEY (`ID`)
+);",
+			$results[0]->{'Create Table'}
+		);
+	}
+
 	public function testShowCreateTableQuoted() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
