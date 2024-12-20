@@ -3762,7 +3762,7 @@ class WP_SQLite_Translator {
 					$data_length = $key_length_limit;
 
 					// Extract the length from the data type. Make it lower if needed. Skip 'unsigned' parts and whitespace.
-					if ( 1 === preg_match( '/^(\w+)\s*\(\s*(\d+)\s*\)\s*(.*)?$/', $data_type, $matches ) ) {
+					if ( 1 === preg_match( '/^(\w+)\s*\(\s*(\d+)\s*\)/', $data_type, $matches ) ) {
 						$data_type   = $matches[1]; // "varchar"
 						$data_length = min( $matches[2], $key_length_limit ); // "255"
 					}
