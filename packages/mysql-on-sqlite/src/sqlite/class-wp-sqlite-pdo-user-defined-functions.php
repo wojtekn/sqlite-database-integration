@@ -73,6 +73,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'regexp'                       => 'regexp',
 		'regexp_like'                  => 'regexp_like',
 		'regexp_replace'               => 'regexp_replace',
+		'regexp_substr'                => 'regexp_substr',
 		'field'                        => 'field',
 		'log'                          => 'log',
 		'least'                        => 'least',
@@ -630,6 +631,45 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		$out .= substr( $expr, $cur );
 
 		return $out;
+	}
+
+	/**
+	 * Method to emulate MySQL REGEXP_SUBSTR() function.
+	 *
+	 * Values of `occurrence` less than 1 are clamped to 1, matching MySQL.
+	 * `pos = char_count + 1` is accepted and yields no match (NULL).
+	 *
+	 * @param string|null $expr       Subject string.
+	 * @param string|null $pattern    Regex pattern.
+	 * @param int|null    $pos        1-based character position to start matching.
+	 * @param int|null    $occurrence Which match to return (1-based; <= 0 clamps to 1).
+	 * @param string|null $match_type MySQL match_type flags.
+	 *
+	 * @throws Exception If the pattern is not a valid regular expression, or pos is out of range.
+	 * @return string|null The matched substring, NULL if no match or any argument is NULL.
+	 */
+	public function regexp_substr( $expr, $pattern, $pos = 1, $occurrence = 1, $match_type = '' ) {
+		if (
+			null === $expr || null === $pattern
+			|| null === $pos || null === $occurrence || null === $match_type
+		) {
+			return null;
+		}
+
+		// MySQL clamps occurrence <= 0 to 1.
+		$n = max( 1, (int) $occurrence );
+
+		$compiled   = $this->regexp_compile( $pattern, $match_type );
+		$byte_start = $this->regexp_char_to_byte_offset( $expr, (int) $pos, true );
+
+		$matches = $this->regexp_find_matches( $compiled, $expr, $byte_start, $n );
+		if ( false === $matches ) {
+			$this->regexp_fail( $pattern );
+		}
+		if ( count( $matches ) < $n ) {
+			return null;
+		}
+		return $matches[ $n - 1 ][0][0];
 	}
 
 	/**
