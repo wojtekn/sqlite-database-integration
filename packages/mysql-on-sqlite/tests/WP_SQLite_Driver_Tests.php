@@ -612,6 +612,73 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$this->assertSame( '2', $this->engine->get_query_results()[0]->r );
 	}
 
+	public function testRegexpEmptyPatternRejected() {
+		// MySQL rejects the empty pattern with ERROR 3685.
+		$this->assertQueryError(
+			"SELECT REGEXP_LIKE('abc', '')",
+			'Illegal argument to a regular expression.'
+		);
+		$this->assertQueryError(
+			"SELECT REGEXP_REPLACE('abc', '', 'x')",
+			'Illegal argument to a regular expression.'
+		);
+		$this->assertQueryError(
+			"SELECT REGEXP_SUBSTR('abc', '')",
+			'Illegal argument to a regular expression.'
+		);
+		$this->assertQueryError(
+			"SELECT REGEXP_INSTR('abc', '')",
+			'Illegal argument to a regular expression.'
+		);
+	}
+
+	public function testRegexpEmptySubject() {
+		// A pattern that matches empty string still matches against an empty subject.
+		$this->assertQuery( "SELECT REGEXP_LIKE('', 'a*') AS r" );
+		$this->assertSame( '1', $this->engine->get_query_results()[0]->r );
+		$this->assertQuery( "SELECT REGEXP_SUBSTR('', 'a*') AS r" );
+		$this->assertSame( '', $this->engine->get_query_results()[0]->r );
+		$this->assertQuery( "SELECT REGEXP_INSTR('', 'a*') AS r" );
+		$this->assertSame( '1', $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpZeroWidthAnchors() {
+		// ^ matches at position 1 (length 0).
+		$this->assertQuery( "SELECT REGEXP_INSTR('abc', '^') AS r" );
+		$this->assertSame( '1', $this->engine->get_query_results()[0]->r );
+		// $ matches one past the last character.
+		$this->assertQuery( "SELECT REGEXP_INSTR('abc', '\$') AS r" );
+		$this->assertSame( '4', $this->engine->get_query_results()[0]->r );
+		// SUBSTR of a zero-width anchor is the empty string, not NULL.
+		$this->assertQuery( "SELECT REGEXP_SUBSTR('abc', '^') AS r" );
+		$this->assertSame( '', $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpAstralPlaneCharacter() {
+		// 4-byte UTF-8 encodes as one code point; char offsets should reflect that.
+		// "x😀y" has three characters (x at 1, 😀 at 2, y at 3).
+		$this->assertQuery( "SELECT REGEXP_SUBSTR('x😀y', '.', 2) AS r" );
+		$this->assertSame( '😀', $this->engine->get_query_results()[0]->r );
+		$this->assertQuery( "SELECT REGEXP_INSTR('😀z', 'z', 1, 1, 1) AS r" );
+		$this->assertSame( '3', $this->engine->get_query_results()[0]->r );
+	}
+
+	public function testRegexpNegativePosErrors() {
+		// REGEXP_LIKE has no pos argument. The other three reject negative pos.
+		$this->assertQueryError(
+			"SELECT REGEXP_REPLACE('abc', 'a', 'X', -1)",
+			'Index out of bounds in regular expression search.'
+		);
+		$this->assertQueryError(
+			"SELECT REGEXP_SUBSTR('abc', 'a', -1)",
+			'Index out of bounds in regular expression search.'
+		);
+		$this->assertQueryError(
+			"SELECT REGEXP_INSTR('abc', 'a', -1)",
+			'Index out of bounds in regular expression search.'
+		);
+	}
+
 	public function testInsertDateNow() {
 		$this->assertQuery(
 			"INSERT INTO _dates (option_name, option_value) VALUES ('first', now());"
