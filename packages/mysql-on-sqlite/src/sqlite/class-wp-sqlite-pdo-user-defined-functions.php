@@ -71,6 +71,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'isnull'                       => 'isnull',
 		'if'                           => '_if',
 		'regexp'                       => 'regexp',
+		'regexp_like'                  => 'regexp_like',
 		'field'                        => 'field',
 		'log'                          => 'log',
 		'least'                        => 'least',
@@ -537,6 +538,32 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	}
 
 	/**
+	 * Method to emulate MySQL REGEXP_LIKE() function.
+	 *
+	 * @param string|null $expr       The subject string.
+	 * @param string|null $pattern    The regex pattern.
+	 * @param string|null $match_type Optional MySQL match_type flags.
+	 *
+	 * @throws Exception If the pattern is not a valid regular expression.
+	 * @return int|null 1 on match, 0 on no match, NULL if any argument is NULL.
+	 */
+	public function regexp_like( $expr, $pattern, $match_type = '' ) {
+		if ( null === $expr || null === $pattern || null === $match_type ) {
+			return null;
+		}
+		$compiled = $this->regexp_compile( $pattern, $match_type );
+		$result   = $this->regexp_run(
+			function () use ( $compiled, $expr ) {
+				return preg_match( $compiled, $expr );
+			}
+		);
+		if ( false === $result ) {
+			$this->regexp_fail( $pattern );
+		}
+		return $result;
+	}
+
+	/**
 	 * Method to emulate MySQL FIELD() function.
 	 *
 	 * This function gets the list argument and compares the first item to all the others.
@@ -895,5 +922,131 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		$pattern = preg_replace( '/\\\\(.)/u', '$1', $pattern );
 
 		return $pattern;
+	}
+
+	/**
+	 * Compile a MySQL-style regex into a PCRE pattern string.
+	 *
+	 * Translates MySQL match_type flags (c/i/m/n/u) to PCRE modifiers and always
+	 * appends the u (UTF-8) modifier. Case-insensitive is the default, matching
+	 * the existing REGEXP operator.
+	 *
+	 * MySQL's native engine is ICU; we use PHP's PCRE. The two diverge in a
+	 * few corners:
+	 *
+	 * - Some Unicode property shorthands and POSIX class spellings differ.
+	 * - PCRE accepts both `(?<name>...)` and `(?P<name>...)`; MySQL accepts
+	 *   only the former and errors on the latter.
+	 * - MySQL's `u` match_type flag ("Unix-only line endings") narrows the
+	 *   meaning of `^`, `$`, and `.` to just "\n". PCRE's default line
+	 *   handling already behaves this way, so the flag is accepted but has
+	 *   no effect; it is MySQL's default mode (without `u`) that is broader
+	 *   and cannot be fully emulated through the `m` modifier alone.
+	 *
+	 * Known limitations of this emulation:
+	 *
+	 * - The default (case-insensitive) is correct for the usual
+	 *   `utf8mb4_0900_ai_ci` collation; callers that rely on a `_bin` or
+	 *   `_cs` collation must pass an explicit `c` match_type because this
+	 *   helper has no access to the session collation.
+	 * - The `u` (UTF-8) PCRE modifier is always applied. Binary data with
+	 *   invalid UTF-8 bytes that matches fine under the legacy `REGEXP`
+	 *   operator raises "Invalid UTF-8 data in regular expression input."
+	 *   when routed through REGEXP_LIKE / _REPLACE / _SUBSTR / _INSTR.
+	 *
+	 * @param string $pattern    The MySQL regex pattern.
+	 * @param string $match_type MySQL match_type flag string.
+	 *
+	 * @throws Exception If the pattern is empty or the match_type string
+	 *                   contains an unrecognized flag.
+	 * @return string PCRE-ready pattern with delimiter and modifiers.
+	 */
+	private function regexp_compile( $pattern, $match_type ) {
+		if ( '' === (string) $pattern ) {
+			throw new Exception( 'Illegal argument to a regular expression.' );
+		}
+		$match_type     = (string) $match_type;
+		$case_sensitive = false;
+		$multiline      = false;
+		$dotall         = false;
+		$len            = strlen( $match_type );
+		for ( $i = 0; $i < $len; $i++ ) {
+			$flag = $match_type[ $i ];
+			if ( 'c' === $flag ) {
+				$case_sensitive = true;
+			} elseif ( 'i' === $flag ) {
+				$case_sensitive = false;
+			} elseif ( 'm' === $flag ) {
+				$multiline = true;
+			} elseif ( 'n' === $flag ) {
+				$dotall = true;
+			} elseif ( 'u' === $flag ) {
+				// Unix-only line endings. PCRE's default matches this already; no-op.
+				continue;
+			} else {
+				throw new Exception( "Invalid match_type flag: $flag." );
+			}
+		}
+
+		$modifiers = 'u';
+		if ( ! $case_sensitive ) {
+			$modifiers .= 'i';
+		}
+		if ( $multiline ) {
+			$modifiers .= 'm';
+		}
+		if ( $dotall ) {
+			$modifiers .= 's';
+		}
+
+		return '/' . str_replace( '/', '\\/', $pattern ) . '/' . $modifiers;
+	}
+
+	/**
+	 * Run a preg_* callable with PHP warnings suppressed.
+	 *
+	 * PHPUnit's strict error handler turns preg_* warnings into ErrorExceptions
+	 * before we can translate them into a MySQL-style error. This wrapper
+	 * suppresses those warnings so the caller can check the result sentinel
+	 * (false for preg_match, null for preg_replace / preg_replace_callback)
+	 * and throw a clean exception.
+	 *
+	 * @param callable $op Preg operation. Must be self-contained.
+	 *
+	 * @return mixed Return value of the callable.
+	 */
+	private function regexp_run( $op ) {
+		set_error_handler( static function () {} );
+		try {
+			return $op();
+		} finally {
+			restore_error_handler();
+		}
+	}
+
+	/**
+	 * Translate a preg_* failure into a caller-friendly exception message.
+	 *
+	 * Uses preg_last_error() to distinguish invalid patterns from runtime
+	 * limit failures and invalid-UTF-8 input.
+	 *
+	 * @param string $pattern The original MySQL regex pattern.
+	 *
+	 * @throws Exception Always.
+	 * @return void
+	 */
+	private function regexp_fail( $pattern ) {
+		$err = preg_last_error();
+		if (
+			PREG_BACKTRACK_LIMIT_ERROR === $err
+			|| PREG_RECURSION_LIMIT_ERROR === $err
+			|| ( defined( 'PREG_JIT_STACKLIMIT_ERROR' ) && PREG_JIT_STACKLIMIT_ERROR === $err )
+		) {
+			throw new Exception( 'Regular expression evaluation exceeded internal limits.' );
+		}
+		if ( PREG_BAD_UTF8_ERROR === $err ) {
+			throw new Exception( 'Invalid UTF-8 data in regular expression input.' );
+		}
+		throw new Exception( 'Invalid regular expression: ' . $pattern . '.' );
 	}
 }
