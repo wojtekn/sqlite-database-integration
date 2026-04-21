@@ -72,6 +72,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'if'                           => '_if',
 		'regexp'                       => 'regexp',
 		'regexp_like'                  => 'regexp_like',
+		'regexp_replace'               => 'regexp_replace',
 		'field'                        => 'field',
 		'log'                          => 'log',
 		'least'                        => 'least',
@@ -564,6 +565,74 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	}
 
 	/**
+	 * Method to emulate MySQL REGEXP_REPLACE() function.
+	 *
+	 * Uses MySQL/ICU replacement grammar: "$N" backreferences ("$0" is the
+	 * full match), "\X" emits X (drops the backslash), "${N}" is rejected.
+	 * Negative `occurrence` is clamped to 1; `pos = char_count + 1` is
+	 * accepted and returns the subject unchanged.
+	 *
+	 * @param string|null $expr        Subject string.
+	 * @param string|null $pattern     Regex pattern.
+	 * @param string|null $replacement Replacement string (supports $N backreferences).
+	 * @param int|null    $pos         1-based character position to start matching.
+	 * @param int|null    $occurrence  Nth match to replace; 0 = all matches.
+	 * @param string|null $match_type  MySQL match_type flags.
+	 *
+	 * @throws Exception If the pattern is not a valid regular expression, or pos is out of range.
+	 * @return string|null The replaced string, or NULL if any argument is NULL.
+	 */
+	public function regexp_replace( $expr, $pattern, $replacement, $pos = 1, $occurrence = 0, $match_type = '' ) {
+		if (
+			null === $expr || null === $pattern || null === $replacement
+			|| null === $pos || null === $occurrence || null === $match_type
+		) {
+			return null;
+		}
+
+		$compiled   = $this->regexp_compile( $pattern, $match_type );
+		$byte_start = $this->regexp_char_to_byte_offset( $expr, (int) $pos, true );
+		$n          = (int) $occurrence;
+
+		// 0 means replace all; negative occurrences are clamped to 1 (MySQL behavior).
+		if ( $n < 0 ) {
+			$n = 1;
+		}
+
+		$matches = $this->regexp_find_matches( $compiled, $expr, $byte_start, $n > 0 ? $n : -1 );
+		if ( false === $matches ) {
+			$this->regexp_fail( $pattern );
+		}
+
+		// Rebuild: bytes before pos are untouched, then walk the collected
+		// matches, substituting only the targeted occurrence (or all when N=0).
+		$out = substr( $expr, 0, $byte_start );
+		$cur = $byte_start;
+		foreach ( $matches as $i => $m ) {
+			$match_start  = $m[0][1];
+			$match_length = strlen( $m[0][0] );
+
+			$out .= substr( $expr, $cur, $match_start - $cur );
+
+			$replace_this = 0 === $n || ( $i + 1 ) === $n;
+			if ( $replace_this ) {
+				$groups = array();
+				foreach ( $m as $g ) {
+					$groups[] = $g[0];
+				}
+				$out .= $this->regexp_expand_replacement( $replacement, $groups );
+			} else {
+				$out .= $m[0][0];
+			}
+
+			$cur = $match_start + $match_length;
+		}
+		$out .= substr( $expr, $cur );
+
+		return $out;
+	}
+
+	/**
 	 * Method to emulate MySQL FIELD() function.
 	 *
 	 * This function gets the list argument and compares the first item to all the others.
@@ -1022,6 +1091,162 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		} finally {
 			restore_error_handler();
 		}
+	}
+
+	/**
+	 * Convert a 1-based character position into a byte offset into the UTF-8 string.
+	 *
+	 * @param string $s              UTF-8 string.
+	 * @param int    $char_pos       1-based character position.
+	 * @param bool   $allow_past_end Whether to accept char_pos == char_count + 1
+	 *                               (returns strlen($s)). MySQL allows this for
+	 *                               REGEXP_REPLACE and REGEXP_SUBSTR but not for
+	 *                               REGEXP_INSTR.
+	 *
+	 * @throws Exception If $char_pos is out of range.
+	 * @return int Byte offset into $s.
+	 */
+	private function regexp_char_to_byte_offset( $s, $char_pos, $allow_past_end = false ) {
+		if ( $char_pos < 1 ) {
+			throw new Exception( 'Index out of bounds in regular expression search.' );
+		}
+		if ( 1 === $char_pos ) {
+			return 0;
+		}
+		$byte_len = strlen( $s );
+		$chars    = 1;
+		for ( $i = 0; $i < $byte_len; $i++ ) {
+			// Count every byte that isn't a UTF-8 continuation byte.
+			if ( ( ord( $s[ $i ] ) & 0xC0 ) !== 0x80 ) {
+				if ( $chars === $char_pos ) {
+					return $i;
+				}
+				++$chars;
+			}
+		}
+		if ( $allow_past_end && $chars === $char_pos ) {
+			return $byte_len;
+		}
+		throw new Exception( 'Index out of bounds in regular expression search.' );
+	}
+
+	/**
+	 * Expand a MySQL/ICU-style replacement template.
+	 *
+	 * Rules (from ICU, used by MySQL REGEXP_REPLACE):
+	 *   - "\X" for any X: emit X, drop the backslash (also applies to "\\" -> "\").
+	 *   - Trailing lone backslash: dropped.
+	 *   - "$N" (N is one or more digits): emit the Nth capture group. Consumes
+	 *     the longest digit run that forms a valid group index; any trailing
+	 *     digits become literal text.
+	 *   - "$" not followed by a digit: error (matches MySQL ERROR 3887).
+	 *   - "$N" where N is larger than any existing group: error (ERROR 3686).
+	 *   - "${N}" is NOT supported and raises the same error as a bare "$".
+	 *
+	 * @param string $replacement The replacement template.
+	 * @param array  $groups      Capture-group texts, with index 0 = full match.
+	 *
+	 * @throws Exception On an invalid "$..." reference.
+	 * @return string The expanded replacement.
+	 */
+	private function regexp_expand_replacement( $replacement, $groups ) {
+		$max_group = count( $groups ) - 1;
+		$out       = '';
+		$len       = strlen( $replacement );
+		$i         = 0;
+		while ( $i < $len ) {
+			$c = $replacement[ $i ];
+			if ( '\\' === $c ) {
+				if ( $i + 1 < $len ) {
+					$out .= $replacement[ $i + 1 ];
+					$i   += 2;
+				} else {
+					++$i;
+				}
+				continue;
+			}
+			if ( '$' === $c ) {
+				if ( $i + 1 >= $len || ! ctype_digit( $replacement[ $i + 1 ] ) ) {
+					throw new Exception( 'A capture group has an invalid name.' );
+				}
+				$j = $i + 1;
+				while ( $j < $len && ctype_digit( $replacement[ $j ] ) ) {
+					++$j;
+				}
+				// Longest digit prefix that refers to an existing group wins;
+				// remaining digits are emitted literally.
+				$digits   = substr( $replacement, $i + 1, $j - $i - 1 );
+				$idx      = null;
+				$consumed = 0;
+				for ( $k = strlen( $digits ); $k > 0; --$k ) {
+					$cand = (int) substr( $digits, 0, $k );
+					if ( $cand <= $max_group ) {
+						$idx      = $cand;
+						$consumed = $k;
+						break;
+					}
+				}
+				if ( null === $idx ) {
+					throw new Exception( 'Index out of bounds in regular expression search.' );
+				}
+				$out .= $groups[ $idx ];
+				$i   += 1 + $consumed;
+				continue;
+			}
+			$out .= $c;
+			++$i;
+		}
+		return $out;
+	}
+
+	/**
+	 * Walk the subject applying a compiled pattern starting at a byte offset.
+	 *
+	 * Returns a list of match arrays in PREG_OFFSET_CAPTURE format. Uses
+	 * preg_match with its offset argument rather than slicing the subject so
+	 * lookbehind assertions can see bytes preceding byte_start.
+	 *
+	 * @param string $compiled   PCRE-wrapped pattern.
+	 * @param string $subject    Full subject string.
+	 * @param int    $byte_start Byte offset at which matching begins.
+	 * @param int    $limit      Max matches to collect; -1 for unlimited.
+	 *
+	 * @return array|false List of match arrays, or false on preg error.
+	 */
+	private function regexp_find_matches( $compiled, $subject, $byte_start, $limit ) {
+		return $this->regexp_run(
+			function () use ( $compiled, $subject, $byte_start, $limit ) {
+				$results = array();
+				$offset  = $byte_start;
+				$len     = strlen( $subject );
+				while ( -1 === $limit || count( $results ) < $limit ) {
+					$r = preg_match( $compiled, $subject, $m, PREG_OFFSET_CAPTURE, $offset );
+					if ( false === $r ) {
+						return false;
+					}
+					if ( 0 === $r ) {
+						break;
+					}
+					$results[]    = $m;
+					$match_start  = $m[0][1];
+					$match_length = strlen( $m[0][0] );
+					$next         = $match_start + $match_length;
+					if ( 0 === $match_length ) {
+						// Advance past a zero-width match to avoid looping on the same offset.
+						// Skip any UTF-8 continuation bytes so the next match starts on a code point boundary.
+						++$next;
+						while ( $next < $len && ( ord( $subject[ $next ] ) & 0xC0 ) === 0x80 ) {
+							++$next;
+						}
+					}
+					if ( $next > $len ) {
+						break;
+					}
+					$offset = $next;
+				}
+				return $results;
+			}
+		);
 	}
 
 	/**
