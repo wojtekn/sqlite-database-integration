@@ -1,0 +1,133 @@
+Keep mergeScan aligned with mutmap changes
+
+Doltlite merges committed prolly-tree rows with transaction-local mutmap
+entries during cursor scans. Two edge cases currently leak stale tree rows:
+
+1) A cursor can be positioned directly at a mutmap INSERT via
+   setCursorToMutMapEntryPhys(), which jumps mmIdx past earlier mutmap
+   entries. A later tree emission must still notice a mutmap DELETE for
+   that same tree key, otherwise SQLite follows a rowid that the mutmap says
+   is deleted and reports "database disk image is malformed".
+
+2) After emitting a mutmap-only row, the committed tree cursor can still be
+   parked before the seek prefix used to find that mutmap row. The next scan
+   step can then emit a committed tree row that does not satisfy the original
+   prefix constraint.
+
+Fix both cases in mergeScan/mergeStep by checking tree keys against mutmap
+DELETE entries and by advancing the tree cursor past the emitted mutmap key.
+
+Reproduces deterministically on:
+
+  CREATE TABLE c (ka TEXT, kb TEXT, kc TEXT, v TEXT,
+                  PRIMARY KEY (ka, kb, kc));
+  INSERT INTO c VALUES ('db','t','a','');
+  BEGIN IMMEDIATE;
+  INSERT INTO c VALUES ('db','t','b','');
+  DELETE FROM c WHERE ka='db' AND kb='t' AND kc='a';
+  UPDATE c SET v = 'x' WHERE ka='db' AND kb='t';  -- malformed w/o fix
+
+And on:
+
+  CREATE TABLE c (ts TEXT NOT NULL COLLATE NOCASE,
+                  tn TEXT NOT NULL COLLATE NOCASE,
+                  cn TEXT NOT NULL COLLATE NOCASE,
+                  ordinal INT NOT NULL,
+                  PRIMARY KEY (ts, tn, cn)) STRICT;
+  BEGIN IMMEDIATE;
+  INSERT INTO c VALUES ('sqlite_database', 't1', 'id', 1);
+  COMMIT;
+  BEGIN IMMEDIATE;
+  INSERT INTO c VALUES ('sqlite_database', 't2', 'id', 1);
+  SELECT tn FROM c WHERE ts = 'sqlite_database' AND tn = 't2';
+  -- returns t2,t1 without the tree-cursor alignment fix
+
+diff --git a/src/prolly_btree.c b/src/prolly_btree.c
+index 7085abb..f9e7d31 100644
+--- a/src/prolly_btree.c
++++ b/src/prolly_btree.c
+@@ -6026,0 +6027,33 @@ static int mergeCompare(BtCursor *pCur, ProllyMutMapEntry *e){
++static int skipDeletedTreeEntry(BtCursor *pCur, int dir, int *pSkipped){
++  ProllyMutMapEntry *delE = 0;
++  int rc;
++  *pSkipped = 0;
++  if( pCur->curIntKey ){
++    rc = prollyMutMapFindRc(pCur->pMutMap, 0, 0,
++                             prollyCursorIntKey(&pCur->pCur), &delE);
++  }else{
++    const u8 *pK; int nK;
++    prollyCursorKey(&pCur->pCur, &pK, &nK);
++    rc = prollyMutMapFindRc(pCur->pMutMap, pK, nK, 0, &delE);
++  }
++  if( rc!=SQLITE_OK ) return rc;
++  if( delE && delE->op==PROLLY_EDIT_DELETE ){
++    rc = advanceTreeCursor(pCur, dir);
++    if( rc!=SQLITE_OK ) return rc;
++    *pSkipped = 1;
++  }
++  return SQLITE_OK;
++}
++
++static int advanceTreePastMutEntry(BtCursor *pCur, ProllyMutMapEntry *e, int dir){
++  int rc;
++  if( !e ) return SQLITE_OK;
++  while( pCur->pCur.eState==PROLLY_CURSOR_VALID ){
++    int cmp = mergeCompare(pCur, e);
++    if( (dir>0 && cmp>0) || (dir<0 && cmp<0) ) break;
++    rc = advanceTreeCursor(pCur, dir);
++    if( rc!=SQLITE_OK ) return rc;
++  }
++  return SQLITE_OK;
++}
++
+@@ -6044,0 +6078,4 @@ static int mergeScan(BtCursor *pCur, int dir, int *pRes){
++      int skipped = 0;
++      int rc = skipDeletedTreeEntry(pCur, dir, &skipped);
++      if( rc!=SQLITE_OK ) return rc;
++      if( skipped ) continue;
+@@ -6057,0 +6095,11 @@ static int mergeScan(BtCursor *pCur, int dir, int *pRes){
++      /* Tree entry is ahead of mutmap[mmIdx] in scan direction.
++      ** Check whether the mutmap has a DELETE entry for the tree
++      ** key at an order index the iteration has already walked
++      ** past (e.g. after setCursorToMutMapEntryPhys jumped mmIdx
++      ** directly to a later INSERT). Without this check the scan
++      ** would emit a logically-deleted tree row and SQLite would
++      ** later TableMoveto a rowid that mutmap says is gone. */
++      int skipped = 0;
++      int rc = skipDeletedTreeEntry(pCur, dir, &skipped);
++      if( rc!=SQLITE_OK ) return rc;
++      if( skipped ) continue;
+@@ -6115 +6163 @@ static int mergeStepForward(BtCursor *pCur){
+-  if( pCur->mergeSrc==MERGE_SRC_TREE || pCur->mergeSrc==MERGE_SRC_BOTH ){
++  if( pCur->mergeSrc==MERGE_SRC_TREE ){
+@@ -6117,0 +6166,8 @@ static int mergeStepForward(BtCursor *pCur){
++  }else if( pCur->mergeSrc==MERGE_SRC_MUT
++         || pCur->mergeSrc==MERGE_SRC_BOTH ){
++    ProllyMutMapEntry *e = 0;
++    if( pCur->mmIdx >= 0 && pCur->mmIdx < pCur->pMutMap->nEntries ){
++      e = orderedMutMapEntryAt(pCur->pMutMap, pCur->mmIdx);
++    }
++    rc = advanceTreePastMutEntry(pCur, e, 1);
++    if( rc!=SQLITE_OK ) return rc;
+@@ -6119 +6175 @@ static int mergeStepForward(BtCursor *pCur){
+-  if( pCur->mergeSrc==MERGE_SRC_MUT || pCur->mergeSrc==MERGE_SRC_BOTH )
++  if( pCur->mergeSrc==MERGE_SRC_MUT || pCur->mergeSrc==MERGE_SRC_BOTH ){
+@@ -6120,0 +6177 @@ static int mergeStepForward(BtCursor *pCur){
++  }
+@@ -6129 +6186 @@ static int mergeStepBackward(BtCursor *pCur){
+-  if( pCur->mergeSrc==MERGE_SRC_TREE || pCur->mergeSrc==MERGE_SRC_BOTH ){
++  if( pCur->mergeSrc==MERGE_SRC_TREE ){
+@@ -6131,0 +6189,8 @@ static int mergeStepBackward(BtCursor *pCur){
++  }else if( pCur->mergeSrc==MERGE_SRC_MUT
++         || pCur->mergeSrc==MERGE_SRC_BOTH ){
++    ProllyMutMapEntry *e = 0;
++    if( pCur->mmIdx >= 0 && pCur->mmIdx < pCur->pMutMap->nEntries ){
++      e = orderedMutMapEntryAt(pCur->pMutMap, pCur->mmIdx);
++    }
++    rc = advanceTreePastMutEntry(pCur, e, -1);
++    if( rc!=SQLITE_OK ) return rc;
+@@ -6133 +6198 @@ static int mergeStepBackward(BtCursor *pCur){
+-  if( pCur->mergeSrc==MERGE_SRC_MUT || pCur->mergeSrc==MERGE_SRC_BOTH )
++  if( pCur->mergeSrc==MERGE_SRC_MUT || pCur->mergeSrc==MERGE_SRC_BOTH ){
+@@ -6134,0 +6200 @@ static int mergeStepBackward(BtCursor *pCur){
++  }

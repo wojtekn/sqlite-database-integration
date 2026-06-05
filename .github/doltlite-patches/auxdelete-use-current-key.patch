@@ -1,0 +1,37 @@
+Use current cursor key for auxiliary index deletes
+
+Doltlite's delete path used the cached seek key for BTREE_AUXDELETE even when
+that seek key no longer matched the current cursor row. When SQLite deletes a
+row through a non-key predicate, secondary index deletes can then target a
+stale key and leave the real index entry visible in the transaction. A later
+insert or update into the deleted key fails with a false UNIQUE violation.
+
+Trust the cached seek key only when it matches the current cursor state; the
+existing fallback paths can derive the key from the current mutmap entry,
+cached payload, or tree cursor.
+
+Reproduces deterministically on:
+
+  CREATE TABLE s (
+    a TEXT COLLATE NOCASE,
+    b TEXT COLLATE NOCASE,
+    idx TEXT COLLATE NOCASE,
+    seq INT,
+    col TEXT COLLATE NOCASE,
+    PRIMARY KEY (a, b, idx, seq),
+    UNIQUE (a, b, idx, seq)
+  ) STRICT;
+  INSERT INTO s VALUES ('sqlite_database', 't', 'u', 1, 'b');
+  INSERT INTO s VALUES ('sqlite_database', 't', 'u', 2, 'c');
+  BEGIN IMMEDIATE;
+  DELETE FROM s WHERE col = 'b';
+  UPDATE s SET seq = 1 WHERE col = 'c';
+
+diff --git a/src/prolly_btree.c b/src/prolly_btree.c
+index 7085abb..9d73876 100644
+--- a/src/prolly_btree.c
++++ b/src/prolly_btree.c
+@@ -7988,2 +7988 @@ static int prollyBtCursorDelete(BtCursor *pCur, u8 flags){
+-      if( pCur->nSeekSortKey>0
+-       && ((flags & BTREE_AUXDELETE) || cachedSeekKeyMatchesCurrent(pCur)) ){
++      if( pCur->nSeekSortKey>0 && cachedSeekKeyMatchesCurrent(pCur) ){
